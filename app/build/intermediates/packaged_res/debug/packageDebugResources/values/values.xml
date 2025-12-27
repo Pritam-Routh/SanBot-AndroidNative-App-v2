@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="accent">#2196F3</color>
+    <color name="accent_dark">#1565C0</color>
+    <color name="background">#FAFAFA</color>
+    <color name="black">#000000</color>
+    <color name="card">#FFFFFF</color>
+    <color name="error">#F44336</color>
+    <color name="idle">#9E9E9E</color>
+    <color name="listening">#2196F3</color>
+    <color name="primary">#1976D2</color>
+    <color name="primary_dark">#0D47A1</color>
+    <color name="primary_light">#BBDEFB</color>
+    <color name="speaking">#4CAF50</color>
+    <color name="success">#4CAF50</color>
+    <color name="surface">#FFFFFF</color>
+    <color name="text_hint">#BDBDBD</color>
+    <color name="text_primary">#212121</color>
+    <color name="text_secondary">#757575</color>
+    <color name="warning">#FF9800</color>
+    <color name="white">#FFFFFF</color>
+    <string name="app_name">Sanbot Voice Agent</string>
+    <string name="app_subtitle">TripAndEvent AI Assistant</string>
+    <string name="btn_mute">Mute</string>
+    <string name="btn_start">Start Conversation</string>
+    <string name="btn_stop">End Conversation</string>
+    <string name="btn_unmute">Unmute</string>
+    <string name="error_connection_failed">Failed to connect</string>
+    <string name="error_network">Network error</string>
+    <string name="error_permission_denied">Microphone permission is required</string>
+    <string name="notification_text">Conversation in progress</string>
+    <string name="notification_title">Voice Agent Active</string>
+    <string name="settings_debug">Debug Mode</string>
+    <string name="settings_title">Settings</string>
+    <string name="settings_vad">Voice Activity Detection</string>
+    <string name="settings_voice">AI Voice</string>
+    <string name="status_connecting">Connecting…</string>
+    <string name="status_disconnecting">Ending conversation…</string>
+    <string name="status_error">Error occurred</string>
+    <string name="status_listening">Listening…</string>
+    <string name="status_processing">Processing…</string>
+    <string name="status_ready">Tap to start a conversation</string>
+    <string name="status_speaking">Speaking…</string>
+    <string name="status_working">Working…</string>
+    <string name="transcript_hint">Conversation transcript will appear here…</string>
+    <style name="Theme.SanbotVoiceAgent" parent="Theme.MaterialComponents.Light.NoActionBar">
+        <item name="colorPrimary">@color/primary</item>
+        <item name="colorPrimaryDark">@color/primary_dark</item>
+        <item name="colorAccent">@color/accent</item>
+        <item name="android:windowBackground">@color/background</item>
+        <item name="android:statusBarColor">@color/primary_dark</item>
+        <item name="android:navigationBarColor">@color/primary_dark</item>
+    </style>
+    <style name="Theme.SanbotVoiceAgent.Conversation">
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:windowBackground">@color/background</item>
+    </style>
+    <style name="Widget.SanbotVoice.Button.Primary" parent="Widget.MaterialComponents.Button">
+        <item name="android:textColor">@color/white</item>
+        <item name="backgroundTint">@color/accent</item>
+        <item name="cornerRadius">28dp</item>
+    </style>
+    <style name="Widget.SanbotVoice.Button.Secondary" parent="Widget.MaterialComponents.Button.OutlinedButton">
+        <item name="android:textColor">@color/accent</item>
+        <item name="strokeColor">@color/accent</item>
+        <item name="cornerRadius">28dp</item>
+    </style>
+</resources>

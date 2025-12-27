@@ -1,0 +1,134 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+android {
+    namespace 'com.tripandevent.sanbotvoice'
+    compileSdk rootProject.ext.compileSdkVersion
+
+    defaultConfig {
+        applicationId "com.tripandevent.sanbotvoice"
+        minSdk rootProject.ext.minSdkVersion
+        targetSdk rootProject.ext.targetSdkVersion
+        versionCode 1
+        versionName "1.0.0"
+
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        
+        // Build config fields from gradle.properties
+        buildConfigField "String", "TRIPANDEVENT_BASE_URL", "\"${project.findProperty('TRIPANDEVENT_BASE_URL') ?: 'https://bot.tripandevent.com'}\""
+        buildConfigField "String", "TRIPANDEVENT_API_TOKEN", "\"${project.findProperty('TRIPANDEVENT_API_TOKEN') ?: ''}\""
+        buildConfigField "String", "OPENAI_REALTIME_MODEL", "\"${project.findProperty('OPENAI_REALTIME_MODEL') ?: 'gpt-realtime'}\""
+        buildConfigField "String", "OPENAI_VOICE", "\"${project.findProperty('OPENAI_VOICE') ?: 'marin'}\""
+        buildConfigField "boolean", "ENABLE_TRANSCRIPT_DISPLAY", "${project.findProperty('ENABLE_TRANSCRIPT_DISPLAY') ?: 'true'}"
+        buildConfigField "boolean", "ENABLE_DEBUG_LOGGING", "${project.findProperty('ENABLE_DEBUG_LOGGING') ?: 'false'}"
+    }
+
+    buildTypes {
+        debug {
+            debuggable true
+            minifyEnabled false
+            buildConfigField "boolean", "ENABLE_DEBUG_LOGGING", "true"
+        }
+        release {
+            debuggable false
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            buildConfigField "boolean", "ENABLE_DEBUG_LOGGING", "false"
+        }
+    }
+    
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+    
+    buildFeatures {
+        viewBinding true
+        buildConfig true
+    }
+    
+    packaging {
+        resources {
+            excludes += '/META-INF/{AL2.0,LGPL2.1}'
+            excludes += '/META-INF/DEPENDENCIES'
+        }
+        jniLibs {
+            useLegacyPackaging true
+        }
+    }
+    
+    // Support for Sanbot SDK .aar files
+    sourceSets {
+        main {
+            jniLibs.srcDirs = ['libs']
+        }
+    }
+}
+
+dependencies {
+    // ============================================
+    // SANBOT SDK
+    // ============================================
+    // Note: Place SanbotOpenSDK.aar in app/libs/ directory
+    implementation fileTree(dir: 'libs', include: ['*.aar', '*.jar'])
+    
+    // ============================================
+    // ANDROID CORE
+    // ============================================
+    implementation 'androidx.core:core-ktx:1.12.0'
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'com.google.android.material:material:1.11.0'
+    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+    implementation 'androidx.activity:activity-ktx:1.8.2'
+    implementation 'androidx.fragment:fragment-ktx:1.6.2'
+    
+    // ============================================
+    // LIFECYCLE
+    // ============================================
+    implementation "androidx.lifecycle:lifecycle-viewmodel-ktx:${rootProject.ext.lifecycle_version}"
+    implementation "androidx.lifecycle:lifecycle-livedata-ktx:${rootProject.ext.lifecycle_version}"
+    implementation "androidx.lifecycle:lifecycle-runtime-ktx:${rootProject.ext.lifecycle_version}"
+    implementation "androidx.lifecycle:lifecycle-service:${rootProject.ext.lifecycle_version}"
+    
+    // ============================================
+    // WEBRTC
+    // ============================================
+    // Google's WebRTC library for Android
+    implementation 'io.getstream:stream-webrtc-android:1.1.0'
+    
+    // ============================================
+    // NETWORKING
+    // ============================================
+    implementation "com.squareup.retrofit2:retrofit:${rootProject.ext.retrofit_version}"
+    implementation "com.squareup.retrofit2:converter-gson:${rootProject.ext.retrofit_version}"
+    implementation "com.squareup.okhttp3:okhttp:${rootProject.ext.okhttp_version}"
+    implementation "com.squareup.okhttp3:logging-interceptor:${rootProject.ext.okhttp_version}"
+    implementation "com.google.code.gson:gson:${rootProject.ext.gson_version}"
+    
+    // ============================================
+    // COROUTINES
+    // ============================================
+    implementation "org.jetbrains.kotlinx:kotlinx-coroutines-core:${rootProject.ext.coroutines_version}"
+    implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:${rootProject.ext.coroutines_version}"
+    
+    // ============================================
+    // LOGGING
+    // ============================================
+    implementation 'com.jakewharton.timber:timber:5.0.1'
+    
+    // ============================================
+    // TESTING
+    // ============================================
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.mockito:mockito-core:5.8.0'
+    testImplementation "org.jetbrains.kotlinx:kotlinx-coroutines-test:${rootProject.ext.coroutines_version}"
+    androidTestImplementation 'androidx.test.ext:junit:1.1.5'
+    androidTestImplementation 'androidx.test.espresso:espresso-core:3.5.1'
+}

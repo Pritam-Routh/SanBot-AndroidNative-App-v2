@@ -1,0 +1,19 @@
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+        // Sanbot SDK local libs - uses flatDir in app/build.gradle instead
+    }
+}
+
+rootProject.name = "SanbotVoiceAgent"
+include(":app")

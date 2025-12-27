@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Sanbot Voice Agent</string>
+    <string name="app_subtitle">TripAndEvent AI Assistant</string>
+    
+    <!-- Buttons -->
+    <string name="btn_start">Start Conversation</string>
+    <string name="btn_stop">End Conversation</string>
+    <string name="btn_mute">Mute</string>
+    <string name="btn_unmute">Unmute</string>
+    
+    <!-- Status messages -->
+    <string name="status_ready">Tap to start a conversation</string>
+    <string name="status_connecting">Connecting…</string>
+    <string name="status_listening">Listening…</string>
+    <string name="status_processing">Processing…</string>
+    <string name="status_speaking">Speaking…</string>
+    <string name="status_working">Working…</string>
+    <string name="status_disconnecting">Ending conversation…</string>
+    <string name="status_error">Error occurred</string>
+    
+    <!-- Transcript -->
+    <string name="transcript_hint">Conversation transcript will appear here…</string>
+    
+    <!-- Notifications -->
+    <string name="notification_title">Voice Agent Active</string>
+    <string name="notification_text">Conversation in progress</string>
+    
+    <!-- Errors -->
+    <string name="error_permission_denied">Microphone permission is required</string>
+    <string name="error_connection_failed">Failed to connect</string>
+    <string name="error_network">Network error</string>
+    
+    <!-- Settings -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_voice">AI Voice</string>
+    <string name="settings_vad">Voice Activity Detection</string>
+    <string name="settings_debug">Debug Mode</string>
+</resources>
