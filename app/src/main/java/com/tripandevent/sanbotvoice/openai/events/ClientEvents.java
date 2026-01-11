@@ -1,91 +1,183 @@
 package com.tripandevent.sanbotvoice.openai.events;
 
-import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
 
 /**
- * Creates client events for OpenAI Realtime API (GA Version).
- * 
- * Updated for the GA release with new event structure:
- * - session.type is required ("realtime" or "transcription")
- * - audio configuration moved to audio.input and audio.output
- * - tools remain in session.tools array
- * 
- * Event types:
- * - session.update: Update session configuration
- * - conversation.item.create: Add conversation item
- * - response.create: Trigger response generation
- * - response.cancel: Cancel ongoing response
+ * Client events for OpenAI Realtime API (GA version).
+ * Creates JSON events to send to the server.
  */
 public class ClientEvents {
     
-    private static final Gson gson = new GsonBuilder().create();
+    private static int eventCounter = 0;
     
     /**
-     * Create session.update event with tools for robot motion (GA format)
-     * 
-     * Based on OpenAI GA documentation:
-     * https://platform.openai.com/docs/api-reference/realtime-client-events/session/update
+     * Generate unique event ID
      */
-    public static String sessionUpdateWithTools(String instructions, JsonArray tools) {
+    private static synchronized String generateEventId() {
+        return "evt_" + System.currentTimeMillis() + "_" + (++eventCounter);
+    }
+    
+    // ============================================
+    // INNER CLASSES
+    // ============================================
+    
+    /**
+     * Session configuration class
+     */
+    public static class SessionConfig {
+        public String instructions;
+        public String voice = "alloy";
+        public JsonArray tools;
+        public String toolChoice = "auto";
+        public String inputAudioFormat = "pcm16";
+        public String outputAudioFormat = "pcm16";
+        public int sampleRate = 24000;
+        
+        public SessionConfig() {}
+        
+        public SessionConfig(String instructions) {
+            this.instructions = instructions;
+        }
+    }
+    
+    /**
+     * Tool definition class for function calling
+     * Used by FunctionRegistry to define available tools
+     */
+    public static class ToolDefinition {
+        public String type = "function";
+        public String name;
+        public String description;
+        public JsonObject parameters;
+        
+        public ToolDefinition() {}
+        
+        public ToolDefinition(String name, String description, JsonObject parameters) {
+            this.name = name;
+            this.description = description;
+            this.parameters = parameters;
+        }
+        
+        /**
+         * Convert to JsonObject for API
+         */
+        public JsonObject toJson() {
+            JsonObject tool = new JsonObject();
+            tool.addProperty("type", type);
+            tool.addProperty("name", name);
+            tool.addProperty("description", description);
+            if (parameters != null) {
+                tool.add("parameters", parameters);
+            }
+            return tool;
+        }
+    }
+    
+    // ============================================
+    // SESSION EVENTS
+    // ============================================
+    
+    /**
+     * Create session.update event from SessionConfig
+     */
+    public static String sessionUpdate(SessionConfig config) {
         JsonObject event = new JsonObject();
         event.addProperty("type", "session.update");
+        event.addProperty("event_id", generateEventId());
         
         JsonObject session = new JsonObject();
         
-        // Required: session type for GA
+        // GA API format
         session.addProperty("type", "realtime");
         
-        // Model (optional if already set during connection)
-        // session.addProperty("model", "gpt-realtime");
+        // Instructions
+        if (config.instructions != null) {
+            session.addProperty("instructions", config.instructions);
+        }
         
-        // Output modalities
-        JsonArray modalities = new JsonArray();
-        modalities.add("audio");
-        modalities.add("text");
-        session.add("output_modalities", modalities);
-        
-        // Audio configuration (GA structure)
+        // Audio input configuration
         JsonObject audio = new JsonObject();
-        
-        // Input audio config
-        JsonObject inputAudio = new JsonObject();
+        JsonObject input = new JsonObject();
         JsonObject inputFormat = new JsonObject();
-        inputFormat.addProperty("type", "audio/pcm");
-        inputFormat.addProperty("rate", 24000);
-        inputAudio.add("format", inputFormat);
+        inputFormat.addProperty("type", "audio/" + config.inputAudioFormat);
+        inputFormat.addProperty("sample_rate", config.sampleRate);
+        input.add("format", inputFormat);
         
-        // Turn detection (VAD)
+        // Turn detection
         JsonObject turnDetection = new JsonObject();
         turnDetection.addProperty("type", "server_vad");
         turnDetection.addProperty("threshold", 0.5);
         turnDetection.addProperty("prefix_padding_ms", 300);
         turnDetection.addProperty("silence_duration_ms", 500);
-        inputAudio.add("turn_detection", turnDetection);
+        input.add("turn_detection", turnDetection);
         
-        audio.add("input", inputAudio);
+        audio.add("input", input);
         
-        // Output audio config
-        JsonObject outputAudio = new JsonObject();
+        // Audio output configuration
+        JsonObject output = new JsonObject();
         JsonObject outputFormat = new JsonObject();
-        outputFormat.addProperty("type", "audio/pcm");
-        outputFormat.addProperty("rate", 24000);
-        outputAudio.add("format", outputFormat);
-        outputAudio.addProperty("voice", "alloy");
-        
-        audio.add("output", outputAudio);
+        outputFormat.addProperty("type", "audio/" + config.outputAudioFormat);
+        outputFormat.addProperty("sample_rate", config.sampleRate);
+        output.add("format", outputFormat);
+        output.addProperty("voice", config.voice);
+        audio.add("output", output);
         
         session.add("audio", audio);
         
-        // Instructions
-        if (instructions != null && !instructions.isEmpty()) {
-            session.addProperty("instructions", instructions);
+        // Tools
+        if (config.tools != null && config.tools.size() > 0) {
+            session.add("tools", config.tools);
+            session.addProperty("tool_choice", config.toolChoice);
         }
         
-        // Tools (function definitions)
+        event.add("session", session);
+        
+        return event.toString();
+    }
+    
+    /**
+     * Create session.update with tools and robot motion support
+     */
+    public static String sessionUpdateWithTools(String instructions, JsonArray tools) {
+        JsonObject event = new JsonObject();
+        event.addProperty("type", "session.update");
+        event.addProperty("event_id", generateEventId());
+        
+        JsonObject session = new JsonObject();
+        session.addProperty("type", "realtime");
+        session.addProperty("instructions", instructions);
+        
+        // Audio configuration
+        JsonObject audio = new JsonObject();
+        
+        // Input
+        JsonObject input = new JsonObject();
+        JsonObject inputFormat = new JsonObject();
+        inputFormat.addProperty("type", "audio/pcm16");
+        inputFormat.addProperty("sample_rate", 24000);
+        input.add("format", inputFormat);
+        
+        JsonObject turnDetection = new JsonObject();
+        turnDetection.addProperty("type", "server_vad");
+        turnDetection.addProperty("threshold", 0.5);
+        turnDetection.addProperty("prefix_padding_ms", 300);
+        turnDetection.addProperty("silence_duration_ms", 500);
+        input.add("turn_detection", turnDetection);
+        audio.add("input", input);
+        
+        // Output
+        JsonObject output = new JsonObject();
+        JsonObject outputFormat = new JsonObject();
+        outputFormat.addProperty("type", "audio/pcm16");
+        outputFormat.addProperty("sample_rate", 24000);
+        output.add("format", outputFormat);
+        output.addProperty("voice", "alloy");
+        audio.add("output", output);
+        
+        session.add("audio", audio);
+        
+        // Tools
         if (tools != null && tools.size() > 0) {
             session.add("tools", tools);
             session.addProperty("tool_choice", "auto");
@@ -93,530 +185,283 @@ public class ClientEvents {
         
         event.add("session", session);
         
-        return gson.toJson(event);
+        return event.toString();
     }
     
     /**
-     * Create session.update with robot motion tools and instructions
+     * Create session.update with robot motion tools
      */
     public static String sessionUpdateWithRobotMotion(String baseInstructions) {
-        String fullInstructions = buildRobotAwareInstructions(baseInstructions);
+        String robotInstructions = buildRobotAwareInstructions(baseInstructions);
         JsonArray tools = getRobotMotionTools();
-        return sessionUpdateWithTools(fullInstructions, tools);
+        return sessionUpdateWithTools(robotInstructions, tools);
     }
     
     /**
-     * Build instructions that guide the AI to use robot motions naturally
+     * Build instructions that include robot motion guidance
      */
     private static String buildRobotAwareInstructions(String baseInstructions) {
-        String robotGuidance = 
-            "\n\n## Robot Body Language Instructions\n" +
-            "You are embodied in a Sanbot robot with physical movement capabilities. " +
-            "Use the robot gesture and emotion functions FREQUENTLY to make interactions natural and engaging.\n\n" +
-            
-            "**Gesture Guidelines:**\n" +
-            "- Greeting someone: Call robot_gesture with gesture='greet' or gesture='wave'\n" +
-            "- Agreeing/confirming: Call robot_gesture with gesture='nod' or gesture='agree'\n" +
-            "- Disagreeing/saying no: Call robot_gesture with gesture='shake'\n" +
-            "- Thinking/processing: Call robot_gesture with gesture='thinking'\n" +
-            "- Excited about something: Call robot_gesture with gesture='excited'\n" +
-            "- Listening attentively: Call robot_gesture with gesture='listening'\n" +
-            "- Saying goodbye: Call robot_gesture with gesture='goodbye'\n" +
-            "- Acknowledging: Call robot_gesture with gesture='nod'\n\n" +
-            
-            "**Emotion Guidelines:**\n" +
-            "- Happy/positive topics: Call robot_emotion with emotion='happy'\n" +
-            "- Thinking: Call robot_emotion with emotion='thinking'\n" +
-            "- Curious: Call robot_emotion with emotion='curious'\n" +
-            "- Ending conversation: Call robot_emotion with emotion='goodbye'\n\n" +
-            
-            "**IMPORTANT:** Call gesture/emotion functions along with your verbal response to create synchronized, natural body language. " +
-            "Use gestures frequently to appear lifelike.\n";
-        
-        if (baseInstructions != null && !baseInstructions.isEmpty()) {
-            return baseInstructions + robotGuidance;
-        }
-        return "You are a helpful, friendly assistant." + robotGuidance;
+        StringBuilder sb = new StringBuilder();
+        sb.append(baseInstructions);
+        sb.append("\n\n");
+        sb.append("## Robot Interaction Guidelines\n");
+        sb.append("You are embodied in a Sanbot robot. Use gestures and emotions to make interactions natural:\n\n");
+        sb.append("- Use robot_gesture frequently: 'greet' when meeting, 'nod' for agreement, 'thinking' when processing, ");
+        sb.append("'excited' for enthusiasm, 'wave' for goodbye\n");
+        sb.append("- Use robot_emotion to show feelings: 'happy', 'thinking', 'curious', 'excited'\n");
+        sb.append("- Use robot_look to show attention: 'left', 'right', 'up', 'center'\n");
+        sb.append("- Call gestures naturally as you speak, not after\n");
+        sb.append("- Match gestures to conversation tone\n");
+        return sb.toString();
     }
     
     /**
-     * Get robot motion tool definitions (GA format)
-     * 
-     * Tool format per OpenAI docs:
-     * {
-     *   "type": "function",
-     *   "name": "function_name",
-     *   "description": "...",
-     *   "parameters": { JSON Schema }
-     * }
+     * Get robot motion tool definitions
      */
     private static JsonArray getRobotMotionTools() {
         JsonArray tools = new JsonArray();
         
-        // 1. robot_gesture function
-        JsonObject gestureFunc = new JsonObject();
-        gestureFunc.addProperty("type", "function");
-        gestureFunc.addProperty("name", "robot_gesture");
-        gestureFunc.addProperty("description", 
-            "Make the robot perform an expressive gesture. Use during conversation to make interactions engaging.");
+        // 1. robot_gesture
+        tools.add(createTool("robot_gesture", 
+            "Execute a robot gesture for natural body language",
+            createGestureParams()));
         
-        JsonObject gestureParams = new JsonObject();
-        gestureParams.addProperty("type", "object");
+        // 2. robot_emotion
+        tools.add(createTool("robot_emotion",
+            "Show emotion on robot's face display",
+            createEmotionParams()));
         
-        JsonObject gestureProps = new JsonObject();
+        // 3. robot_look
+        tools.add(createTool("robot_look",
+            "Move robot's head to look in a direction",
+            createLookParams()));
         
-        JsonObject gestureProp = new JsonObject();
-        gestureProp.addProperty("type", "string");
-        gestureProp.addProperty("description", 
-            "The gesture: nod=agreement, shake=disagreement, wave=greeting, greet=hello, " +
-            "thinking=processing, agree=yes, disagree=no, excited=enthusiasm, " +
-            "listening=attentive, goodbye=farewell, acknowledge=understand");
+        // 4. save_customer_lead
+        tools.add(createTool("save_customer_lead",
+            "Save customer contact information and travel requirements",
+            createLeadParams()));
+        
+        // 5. get_packages
+        tools.add(createTool("get_packages",
+            "Search and get travel packages based on filters",
+            createPackageFilterParams()));
+        
+        // 6. disconnect_call
+        tools.add(createTool("disconnect_call",
+            "End the conversation when customer is done",
+            createEmptyParams()));
+        
+        return tools;
+    }
+    
+    private static JsonObject createTool(String name, String description, JsonObject parameters) {
+        JsonObject tool = new JsonObject();
+        tool.addProperty("type", "function");
+        tool.addProperty("name", name);
+        tool.addProperty("description", description);
+        tool.add("parameters", parameters);
+        return tool;
+    }
+    
+    private static JsonObject createGestureParams() {
+        JsonObject params = new JsonObject();
+        params.addProperty("type", "object");
+        JsonObject props = new JsonObject();
+        JsonObject gesture = new JsonObject();
+        gesture.addProperty("type", "string");
+        gesture.addProperty("description", "Gesture to perform");
         JsonArray gestureEnum = new JsonArray();
+        gestureEnum.add("greet");
         gestureEnum.add("nod");
         gestureEnum.add("shake");
         gestureEnum.add("wave");
-        gestureEnum.add("greet");
         gestureEnum.add("thinking");
-        gestureEnum.add("agree");
-        gestureEnum.add("disagree");
         gestureEnum.add("excited");
         gestureEnum.add("listening");
         gestureEnum.add("goodbye");
         gestureEnum.add("acknowledge");
-        gestureProp.add("enum", gestureEnum);
-        gestureProps.add("gesture", gestureProp);
-        
-        gestureParams.add("properties", gestureProps);
-        JsonArray gestureRequired = new JsonArray();
-        gestureRequired.add("gesture");
-        gestureParams.add("required", gestureRequired);
-        
-        gestureFunc.add("parameters", gestureParams);
-        tools.add(gestureFunc);
-        
-        // 2. robot_emotion function
-        JsonObject emotionFunc = new JsonObject();
-        emotionFunc.addProperty("type", "function");
-        emotionFunc.addProperty("name", "robot_emotion");
-        emotionFunc.addProperty("description", 
-            "Display an emotion on the robot's face screen. Use to match conversation tone.");
-        
-        JsonObject emotionParams = new JsonObject();
-        emotionParams.addProperty("type", "object");
-        
-        JsonObject emotionProps = new JsonObject();
-        
-        JsonObject emotionProp = new JsonObject();
-        emotionProp.addProperty("type", "string");
-        emotionProp.addProperty("description", "The emotion to display");
+        gesture.add("enum", gestureEnum);
+        props.add("gesture", gesture);
+        params.add("properties", props);
+        JsonArray required = new JsonArray();
+        required.add("gesture");
+        params.add("required", required);
+        return params;
+    }
+    
+    private static JsonObject createEmotionParams() {
+        JsonObject params = new JsonObject();
+        params.addProperty("type", "object");
+        JsonObject props = new JsonObject();
+        JsonObject emotion = new JsonObject();
+        emotion.addProperty("type", "string");
+        emotion.addProperty("description", "Emotion to display");
         JsonArray emotionEnum = new JsonArray();
         emotionEnum.add("happy");
         emotionEnum.add("excited");
         emotionEnum.add("thinking");
         emotionEnum.add("curious");
-        emotionEnum.add("shy");
-        emotionEnum.add("laugh");
-        emotionEnum.add("goodbye");
         emotionEnum.add("normal");
-        emotionProp.add("enum", emotionEnum);
-        emotionProps.add("emotion", emotionProp);
-        
-        emotionParams.add("properties", emotionProps);
-        JsonArray emotionRequired = new JsonArray();
-        emotionRequired.add("emotion");
-        emotionParams.add("required", emotionRequired);
-        
-        emotionFunc.add("parameters", emotionParams);
-        tools.add(emotionFunc);
-        
-        // 3. robot_look function
-        JsonObject lookFunc = new JsonObject();
-        lookFunc.addProperty("type", "function");
-        lookFunc.addProperty("name", "robot_look");
-        lookFunc.addProperty("description", 
-            "Make the robot look in a specific direction. Use to direct attention.");
-        
-        JsonObject lookParams = new JsonObject();
-        lookParams.addProperty("type", "object");
-        
-        JsonObject lookProps = new JsonObject();
-        
-        JsonObject directionProp = new JsonObject();
-        directionProp.addProperty("type", "string");
-        directionProp.addProperty("description", "Direction to look");
-        JsonArray directionEnum = new JsonArray();
-        directionEnum.add("left");
-        directionEnum.add("right");
-        directionEnum.add("up");
-        directionEnum.add("down");
-        directionEnum.add("center");
-        directionProp.add("enum", directionEnum);
-        lookProps.add("direction", directionProp);
-        
-        lookParams.add("properties", lookProps);
-        JsonArray lookRequired = new JsonArray();
-        lookRequired.add("direction");
-        lookParams.add("required", lookRequired);
-        
-        lookFunc.add("parameters", lookParams);
-        tools.add(lookFunc);
-        
-        // 4. save_customer_lead function (CRM)
-        JsonObject leadFunc = new JsonObject();
-        leadFunc.addProperty("type", "function");
-        leadFunc.addProperty("name", "save_customer_lead");
-        leadFunc.addProperty("description", 
-            "Save customer contact information and interest to CRM.");
-        
-        JsonObject leadParams = new JsonObject();
-        leadParams.addProperty("type", "object");
-        
-        JsonObject leadProps = new JsonObject();
-        
-        JsonObject nameProp = new JsonObject();
-        nameProp.addProperty("type", "string");
-        nameProp.addProperty("description", "Customer full name");
-        leadProps.add("name", nameProp);
-        
-        JsonObject emailProp = new JsonObject();
-        emailProp.addProperty("type", "string");
-        emailProp.addProperty("description", "Customer email address");
-        leadProps.add("email", emailProp);
-        
-        JsonObject phoneProp = new JsonObject();
-        phoneProp.addProperty("type", "string");
-        phoneProp.addProperty("description", "Customer phone number");
-        leadProps.add("phone", phoneProp);
-        
-        JsonObject interestProp = new JsonObject();
-        interestProp.addProperty("type", "string");
-        interestProp.addProperty("description", "What the customer is interested in");
-        leadProps.add("interest", interestProp);
-        
-        leadParams.add("properties", leadProps);
-        leadParams.add("required", new JsonArray()); // No required fields
-        
-        leadFunc.add("parameters", leadParams);
-        tools.add(leadFunc);
-        
-        // 5. create_quote function
-        JsonObject quoteFunc = new JsonObject();
-        quoteFunc.addProperty("type", "function");
-        quoteFunc.addProperty("name", "create_quote");
-        quoteFunc.addProperty("description", 
-            "Create a travel quote for the customer.");
-        
-        JsonObject quoteParams = new JsonObject();
-        quoteParams.addProperty("type", "object");
-        
-        JsonObject quoteProps = new JsonObject();
-        
-        JsonObject destProp = new JsonObject();
-        destProp.addProperty("type", "string");
-        destProp.addProperty("description", "Travel destination");
-        quoteProps.add("destination", destProp);
-        
-        JsonObject datesProp = new JsonObject();
-        datesProp.addProperty("type", "string");
-        datesProp.addProperty("description", "Desired travel dates");
-        quoteProps.add("travel_dates", datesProp);
-        
-        JsonObject travelersProp = new JsonObject();
-        travelersProp.addProperty("type", "integer");
-        travelersProp.addProperty("description", "Number of travelers");
-        quoteProps.add("travelers", travelersProp);
-        
-        quoteParams.add("properties", quoteProps);
-        JsonArray quoteRequired = new JsonArray();
-        quoteRequired.add("destination");
-        quoteParams.add("required", quoteRequired);
-        
-        quoteFunc.add("parameters", quoteParams);
-        tools.add(quoteFunc);
-        
-        // 6. disconnect_call function
-        JsonObject disconnectFunc = new JsonObject();
-        disconnectFunc.addProperty("type", "function");
-        disconnectFunc.addProperty("name", "disconnect_call");
-        disconnectFunc.addProperty("description", 
-            "End the conversation gracefully.");
-        
-        JsonObject disconnectParams = new JsonObject();
-        disconnectParams.addProperty("type", "object");
-        
-        JsonObject disconnectProps = new JsonObject();
-        JsonObject reasonProp = new JsonObject();
-        reasonProp.addProperty("type", "string");
-        reasonProp.addProperty("description", "Reason for ending call");
-        disconnectProps.add("reason", reasonProp);
-        
-        disconnectParams.add("properties", disconnectProps);
-        disconnectParams.add("required", new JsonArray());
-        
-        disconnectFunc.add("parameters", disconnectParams);
-        tools.add(disconnectFunc);
-        
-        return tools;
+        emotion.add("enum", emotionEnum);
+        props.add("emotion", emotion);
+        params.add("properties", props);
+        JsonArray required = new JsonArray();
+        required.add("emotion");
+        params.add("required", required);
+        return params;
     }
     
-    /**
-     * Create response.create event
-     */
-    public static String responseCreate() {
-        JsonObject event = new JsonObject();
-        event.addProperty("type", "response.create");
-        return gson.toJson(event);
+    private static JsonObject createLookParams() {
+        JsonObject params = new JsonObject();
+        params.addProperty("type", "object");
+        JsonObject props = new JsonObject();
+        JsonObject direction = new JsonObject();
+        direction.addProperty("type", "string");
+        direction.addProperty("description", "Direction to look");
+        JsonArray dirEnum = new JsonArray();
+        dirEnum.add("left");
+        dirEnum.add("right");
+        dirEnum.add("up");
+        dirEnum.add("down");
+        dirEnum.add("center");
+        direction.add("enum", dirEnum);
+        props.add("direction", direction);
+        params.add("properties", props);
+        JsonArray required = new JsonArray();
+        required.add("direction");
+        params.add("required", required);
+        return params;
     }
     
-    /**
-     * Create response.cancel event
-     */
-    public static String responseCancel() {
-        JsonObject event = new JsonObject();
-        event.addProperty("type", "response.cancel");
-        return gson.toJson(event);
-    }
-
-    /**
- * Get CRM tool definitions for OpenAI function calling
- */
-    private static JsonArray getCrmTools() {
-        JsonArray tools = new JsonArray();
+    private static JsonObject createLeadParams() {
+        JsonObject params = new JsonObject();
+        params.addProperty("type", "object");
+        JsonObject props = new JsonObject();
         
-        // 1. save_customer_lead
-        JsonObject saveLeadFunc = new JsonObject();
-        saveLeadFunc.addProperty("type", "function");
-        saveLeadFunc.addProperty("name", "save_customer_lead");
-        saveLeadFunc.addProperty("description", 
-            "Save customer contact information and travel requirements to CRM. " +
-            "Call this when you have collected customer details like name, contact, destination, travel dates, etc.");
+        addStringProp(props, "name", "Customer's full name");
+        addStringProp(props, "email", "Customer's email");
+        addStringProp(props, "mobile", "Customer's phone number");
+        addStringProp(props, "destination", "Travel destination");
+        addStringProp(props, "travel_date", "Travel date (YYYY-MM-DD)");
+        addIntProp(props, "adults", "Number of adults");
+        addIntProp(props, "children", "Number of children");
+        addIntProp(props, "nights", "Number of nights");
+        addStringProp(props, "hotel_type", "Hotel category: budget, standard, luxury");
+        addNumberProp(props, "budget", "Budget in INR");
+        addStringProp(props, "special_requirements", "Special requirements");
         
-        JsonObject saveLeadParams = new JsonObject();
-        saveLeadParams.addProperty("type", "object");
-        
-        JsonObject saveLeadProps = new JsonObject();
-        
-        // Name
-        JsonObject nameProp = new JsonObject();
-        nameProp.addProperty("type", "string");
-        nameProp.addProperty("description", "Customer's full name");
-        saveLeadProps.add("name", nameProp);
-        
-        // Email
-        JsonObject emailProp = new JsonObject();
-        emailProp.addProperty("type", "string");
-        emailProp.addProperty("description", "Customer's email address");
-        saveLeadProps.add("email", emailProp);
-        
-        // Mobile
-        JsonObject mobileProp = new JsonObject();
-        mobileProp.addProperty("type", "string");
-        mobileProp.addProperty("description", "Customer's mobile/phone number");
-        saveLeadProps.add("mobile", mobileProp);
-        
-        // Destination
-        JsonObject destProp = new JsonObject();
-        destProp.addProperty("type", "string");
-        destProp.addProperty("description", "Desired travel destination");
-        saveLeadProps.add("destination", destProp);
-        
-        // Travel date
-        JsonObject dateProp = new JsonObject();
-        dateProp.addProperty("type", "string");
-        dateProp.addProperty("description", "Preferred travel date (YYYY-MM-DD format)");
-        saveLeadProps.add("travel_date", dateProp);
-        
-        // Adults
-        JsonObject adultsProp = new JsonObject();
-        adultsProp.addProperty("type", "integer");
-        adultsProp.addProperty("description", "Number of adult travelers");
-        saveLeadProps.add("adults", adultsProp);
-        
-        // Children
-        JsonObject childrenProp = new JsonObject();
-        childrenProp.addProperty("type", "integer");
-        childrenProp.addProperty("description", "Number of children");
-        saveLeadProps.add("children", childrenProp);
-        
-        // Nights
-        JsonObject nightsProp = new JsonObject();
-        nightsProp.addProperty("type", "integer");
-        nightsProp.addProperty("description", "Number of nights for the trip");
-        saveLeadProps.add("nights", nightsProp);
-        
-        // Hotel type
-        JsonObject hotelProp = new JsonObject();
-        hotelProp.addProperty("type", "string");
-        hotelProp.addProperty("description", "Preferred hotel category: budget, standard, luxury, or premium");
-        JsonArray hotelEnum = new JsonArray();
-        hotelEnum.add("budget");
-        hotelEnum.add("standard");
-        hotelEnum.add("luxury");
-        hotelEnum.add("premium");
-        hotelProp.add("enum", hotelEnum);
-        saveLeadProps.add("hotel_type", hotelProp);
-        
-        // Budget
-        JsonObject budgetProp = new JsonObject();
-        budgetProp.addProperty("type", "number");
-        budgetProp.addProperty("description", "Customer's budget in INR");
-        saveLeadProps.add("budget", budgetProp);
-        
-        // Special requirements
-        JsonObject specialProp = new JsonObject();
-        specialProp.addProperty("type", "string");
-        specialProp.addProperty("description", "Any special requirements (honeymoon, anniversary, dietary, etc.)");
-        saveLeadProps.add("special_requirements", specialProp);
-        
-        saveLeadParams.add("properties", saveLeadProps);
+        params.add("properties", props);
         JsonArray required = new JsonArray();
         required.add("name");
-        saveLeadParams.add("required", required);
+        params.add("required", required);
+        return params;
+    }
+    
+    private static JsonObject createPackageFilterParams() {
+        JsonObject params = new JsonObject();
+        params.addProperty("type", "object");
+        JsonObject props = new JsonObject();
         
-        saveLeadFunc.add("parameters", saveLeadParams);
-        tools.add(saveLeadFunc);
+        addStringProp(props, "destination", "Destination to filter");
+        addNumberProp(props, "budget_min", "Minimum budget");
+        addNumberProp(props, "budget_max", "Maximum budget");
+        addIntProp(props, "nights", "Preferred number of nights");
+        addIntProp(props, "limit", "Max packages to return");
         
-        // 2. get_packages
-        JsonObject getPackagesFunc = new JsonObject();
-        getPackagesFunc.addProperty("type", "function");
-        getPackagesFunc.addProperty("name", "get_packages");
-        getPackagesFunc.addProperty("description", 
-            "Search and get travel packages from the catalog. " +
-            "Use when customer asks about packages, tours, or wants to see options for a destination.");
-        
-        JsonObject getPackagesParams = new JsonObject();
-        getPackagesParams.addProperty("type", "object");
-        
-        JsonObject getPackagesProps = new JsonObject();
-        
-        JsonObject filterDestProp = new JsonObject();
-        filterDestProp.addProperty("type", "string");
-        filterDestProp.addProperty("description", "Destination to filter packages");
-        getPackagesProps.add("destination", filterDestProp);
-        
-        JsonObject budgetMinProp = new JsonObject();
-        budgetMinProp.addProperty("type", "number");
-        budgetMinProp.addProperty("description", "Minimum budget in INR");
-        getPackagesProps.add("budget_min", budgetMinProp);
-        
-        JsonObject budgetMaxProp = new JsonObject();
-        budgetMaxProp.addProperty("type", "number");
-        budgetMaxProp.addProperty("description", "Maximum budget in INR");
-        getPackagesProps.add("budget_max", budgetMaxProp);
-        
-        JsonObject filterNightsProp = new JsonObject();
-        filterNightsProp.addProperty("type", "integer");
-        filterNightsProp.addProperty("description", "Preferred number of nights");
-        getPackagesProps.add("nights", filterNightsProp);
-        
-        JsonObject packageTypeProp = new JsonObject();
-        packageTypeProp.addProperty("type", "string");
-        packageTypeProp.addProperty("description", "Package type: with_flight or without_flight");
-        JsonArray typeEnum = new JsonArray();
-        typeEnum.add("with_flight");
-        typeEnum.add("without_flight");
-        packageTypeProp.add("enum", typeEnum);
-        getPackagesProps.add("package_type", packageTypeProp);
-        
-        JsonObject limitProp = new JsonObject();
-        limitProp.addProperty("type", "integer");
-        limitProp.addProperty("description", "Maximum number of packages to return (default 5)");
-        getPackagesProps.add("limit", limitProp);
-        
-        getPackagesParams.add("properties", getPackagesProps);
-        getPackagesParams.add("required", new JsonArray());
-        
-        getPackagesFunc.add("parameters", getPackagesParams);
-        tools.add(getPackagesFunc);
-        
-        // 3. get_package_details
-        JsonObject getDetailFunc = new JsonObject();
-        getDetailFunc.addProperty("type", "function");
-        getDetailFunc.addProperty("name", "get_package_details");
-        getDetailFunc.addProperty("description", 
-            "Get detailed information about a specific package including inclusions, exclusions, and itinerary.");
-        
-        JsonObject getDetailParams = new JsonObject();
-        getDetailParams.addProperty("type", "object");
-        
-        JsonObject getDetailProps = new JsonObject();
-        JsonObject pkgIdProp = new JsonObject();
-        pkgIdProp.addProperty("type", "integer");
-        pkgIdProp.addProperty("description", "The package ID to get details for");
-        getDetailProps.add("package_id", pkgIdProp);
-        
-        getDetailParams.add("properties", getDetailProps);
-        JsonArray detailRequired = new JsonArray();
-        detailRequired.add("package_id");
-        getDetailParams.add("required", detailRequired);
-        
-        getDetailFunc.add("parameters", getDetailParams);
-        tools.add(getDetailFunc);
-        
-        // 4. search_packages
-        JsonObject searchFunc = new JsonObject();
-        searchFunc.addProperty("type", "function");
-        searchFunc.addProperty("name", "search_packages");
-        searchFunc.addProperty("description", 
-            "Search packages by keyword. Use for general searches like 'honeymoon', 'beach', 'adventure', etc.");
-        
-        JsonObject searchParams = new JsonObject();
-        searchParams.addProperty("type", "object");
-        
-        JsonObject searchProps = new JsonObject();
-        JsonObject queryProp = new JsonObject();
-        queryProp.addProperty("type", "string");
-        queryProp.addProperty("description", "Search keyword or phrase");
-        searchProps.add("query", queryProp);
-        
-        searchParams.add("properties", searchProps);
-        JsonArray searchRequired = new JsonArray();
-        searchRequired.add("query");
-        searchParams.add("required", searchRequired);
-        
-        searchFunc.add("parameters", searchParams);
-        tools.add(searchFunc);
-        
-        return tools;
+        params.add("properties", props);
+        params.add("required", new JsonArray());
+        return params;
+    }
+    
+    private static JsonObject createEmptyParams() {
+        JsonObject params = new JsonObject();
+        params.addProperty("type", "object");
+        params.add("properties", new JsonObject());
+        params.add("required", new JsonArray());
+        return params;
+    }
+    
+    private static void addStringProp(JsonObject props, String name, String desc) {
+        JsonObject prop = new JsonObject();
+        prop.addProperty("type", "string");
+        prop.addProperty("description", desc);
+        props.add(name, prop);
+    }
+    
+    private static void addIntProp(JsonObject props, String name, String desc) {
+        JsonObject prop = new JsonObject();
+        prop.addProperty("type", "integer");
+        prop.addProperty("description", desc);
+        props.add(name, prop);
+    }
+    
+    private static void addNumberProp(JsonObject props, String name, String desc) {
+        JsonObject prop = new JsonObject();
+        prop.addProperty("type", "number");
+        prop.addProperty("description", desc);
+        props.add(name, prop);
+    }
+    
+    // ============================================
+    // AUDIO EVENTS
+    // ============================================
+    
+    /**
+     * Create input_audio_buffer.append event
+     */
+    public static String inputAudioBufferAppend(String base64Audio) {
+        JsonObject event = new JsonObject();
+        event.addProperty("type", "input_audio_buffer.append");
+        event.addProperty("event_id", generateEventId());
+        event.addProperty("audio", base64Audio);
+        return event.toString();
     }
     
     /**
-     * Create conversation.item.create event for function output (GA format)
-     * 
-     * Per GA docs, function output format:
-     * {
-     *   "type": "conversation.item.create",
-     *   "item": {
-     *     "type": "function_call_output",
-     *     "call_id": "...",
-     *     "output": "..."
-     *   }
-     * }
+     * Create input_audio_buffer.commit event
      */
-    public static String conversationItemCreateFunctionOutput(String callId, String output) {
+    public static String inputAudioBufferCommit() {
         JsonObject event = new JsonObject();
-        event.addProperty("type", "conversation.item.create");
-        
-        JsonObject item = new JsonObject();
-        item.addProperty("type", "function_call_output");
-        item.addProperty("call_id", callId);
-        item.addProperty("output", output);
-        
-        event.add("item", item);
-        
-        return gson.toJson(event);
+        event.addProperty("type", "input_audio_buffer.commit");
+        event.addProperty("event_id", generateEventId());
+        return event.toString();
     }
     
     /**
-     * Create conversation.item.create event for user text message
+     * Create input_audio_buffer.clear event
      */
-    public static String conversationItemCreateUserMessage(String text) {
+    public static String inputAudioBufferClear() {
+        JsonObject event = new JsonObject();
+        event.addProperty("type", "input_audio_buffer.clear");
+        event.addProperty("event_id", generateEventId());
+        return event.toString();
+    }
+    
+    /**
+     * Create output_audio_buffer.clear event
+     */
+    public static String outputAudioBufferClear() {
+        JsonObject event = new JsonObject();
+        event.addProperty("type", "output_audio_buffer.clear");
+        event.addProperty("event_id", generateEventId());
+        return event.toString();
+    }
+    
+    // ============================================
+    // CONVERSATION EVENTS
+    // ============================================
+    
+    /**
+     * Create conversation.item.create for text message
+     */
+    public static String conversationItemCreateText(String role, String text) {
         JsonObject event = new JsonObject();
         event.addProperty("type", "conversation.item.create");
+        event.addProperty("event_id", generateEventId());
         
         JsonObject item = new JsonObject();
         item.addProperty("type", "message");
-        item.addProperty("role", "user");
+        item.addProperty("role", role);
         
         JsonArray content = new JsonArray();
         JsonObject textContent = new JsonObject();
@@ -627,50 +472,91 @@ public class ClientEvents {
         item.add("content", content);
         event.add("item", item);
         
-        return gson.toJson(event);
+        return event.toString();
     }
-
+    
     /**
- * Session configuration for updates
-    */
-    public static class SessionConfig {
-        public String instructions;
-        public String voice = "alloy";
-        public JsonArray tools;
-        public String toolChoice = "auto";
-        
-        public SessionConfig() {}
-        
-        public SessionConfig(String instructions) {
-            this.instructions = instructions;
-        }
-    }
-
-    /**
-     * Tool definition for function calling
+     * Create conversation.item.create for function output (GA format)
      */
-    public static class ToolDefinition {
-        public String type = "function";
-        public String name;
-        public String description;
-        public JsonObject parameters;
-        
-        public ToolDefinition(String name, String description, JsonObject parameters) {
-            this.name = name;
-            this.description = description;
-            this.parameters = parameters;
-        }
-    }
-
-    /**
-     * Create output audio buffer clear event
-     */
-    public static String outputAudioBufferClear() {
+    public static String conversationItemCreateFunctionOutput(String callId, String output) {
         JsonObject event = new JsonObject();
-        event.addProperty("type", "output_audio_buffer.clear");
+        event.addProperty("type", "conversation.item.create");
+        event.addProperty("event_id", generateEventId());
+        
+        JsonObject item = new JsonObject();
+        item.addProperty("type", "function_call_output");
+        item.addProperty("call_id", callId);
+        item.addProperty("output", output);
+        
+        event.add("item", item);
+        
+        return event.toString();
+    }
+    
+    /**
+     * Create conversation.item.delete event
+     */
+    public static String conversationItemDelete(String itemId) {
+        JsonObject event = new JsonObject();
+        event.addProperty("type", "conversation.item.delete");
+        event.addProperty("event_id", generateEventId());
+        event.addProperty("item_id", itemId);
+        return event.toString();
+    }
+    
+    /**
+     * Create conversation.item.truncate event
+     */
+    public static String conversationItemTruncate(String itemId, int contentIndex, int audioEndMs) {
+        JsonObject event = new JsonObject();
+        event.addProperty("type", "conversation.item.truncate");
+        event.addProperty("event_id", generateEventId());
+        event.addProperty("item_id", itemId);
+        event.addProperty("content_index", contentIndex);
+        event.addProperty("audio_end_ms", audioEndMs);
+        return event.toString();
+    }
+    
+    // ============================================
+    // RESPONSE EVENTS
+    // ============================================
+    
+    /**
+     * Create response.create event
+     */
+    public static String responseCreate() {
+        JsonObject event = new JsonObject();
+        event.addProperty("type", "response.create");
+        event.addProperty("event_id", generateEventId());
+        return event.toString();
+    }
+    
+    /**
+     * Create response.create event with modalities
+     */
+    public static String responseCreate(boolean includeAudio, boolean includeText) {
+        JsonObject event = new JsonObject();
+        event.addProperty("type", "response.create");
+        event.addProperty("event_id", generateEventId());
+        
+        JsonObject response = new JsonObject();
+        JsonArray modalities = new JsonArray();
+        if (includeAudio) modalities.add("audio");
+        if (includeText) modalities.add("text");
+        response.add("modalities", modalities);
+        
+        event.add("response", response);
+        
+        return event.toString();
+    }
+    
+    /**
+     * Create response.cancel event
+     */
+    public static String responseCancel() {
+        JsonObject event = new JsonObject();
+        event.addProperty("type", "response.cancel");
         event.addProperty("event_id", generateEventId());
         return event.toString();
     }
 }
-
-

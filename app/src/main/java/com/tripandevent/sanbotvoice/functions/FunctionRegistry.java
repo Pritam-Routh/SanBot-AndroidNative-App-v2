@@ -3,7 +3,7 @@ package com.tripandevent.sanbotvoice.functions;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.tripandevent.sanbotvoice.openai.events.ClientEvents;
-import com.tripandevent.sanbotvoice.utils.Constants;
+import com.tripandevent.sanbotvoice.utils.Logger;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -11,128 +11,209 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Registry of all available functions (tools) for OpenAI Realtime API.
- * 
- * This defines what functions the AI can call during a conversation.
- * Each function has a name, description, and parameter schema.
+ * Registry for function handlers.
+ * Manages the mapping between function names and their handlers.
  */
 public class FunctionRegistry {
     
+    private static final String TAG = "FunctionRegistry";
+    
     private final Map<String, FunctionHandler> handlers = new HashMap<>();
     
-    /**
-     * Initialize registry with all available functions
-     */
     public FunctionRegistry() {
-        // Register all function handlers
-        registerHandler(Constants.FUNCTION_SAVE_CUSTOMER_LEAD, new SaveCustomerLeadFunction());
-        registerHandler(Constants.FUNCTION_CREATE_QUOTE, new CreateQuoteFunction());
-        registerHandler(Constants.FUNCTION_DISCONNECT_CALL, new DisconnectCallFunction());
+        // Register default handlers
     }
     
     /**
      * Register a function handler
+     * 
+     * @param functionName Name of the function
+     * @param handler Handler for the function
      */
     public void registerHandler(String functionName, FunctionHandler handler) {
         handlers.put(functionName, handler);
+        Logger.d(TAG, "Registered handler for: %s", functionName);
     }
     
     /**
      * Get handler for a function
+     * 
+     * @param functionName Name of the function
+     * @return Handler or null if not found
      */
     public FunctionHandler getHandler(String functionName) {
         return handlers.get(functionName);
     }
     
     /**
-     * Check if a function is registered
+     * Check if a handler exists for a function
      */
-    public boolean hasFunction(String functionName) {
+    public boolean hasHandler(String functionName) {
         return handlers.containsKey(functionName);
     }
     
     /**
-     * Get all tool definitions for session configuration
+     * Get all registered function names
      */
-    public List<ClientEvents.ToolDefinition> getToolDefinitions() {
-        List<ClientEvents.ToolDefinition> tools = new ArrayList<>();
+    public List<String> getRegisteredFunctions() {
+        return new ArrayList<>(handlers.keySet());
+    }
+    
+    /**
+     * Get tool definitions for OpenAI API
+     * Returns a JsonArray of tool definitions
+     */
+    public JsonArray getToolDefinitionsAsJsonArray() {
+        JsonArray tools = new JsonArray();
         
-        // Save Customer Lead function
-        tools.add(new ClientEvents.ToolDefinition(
-            Constants.FUNCTION_SAVE_CUSTOMER_LEAD,
-            "Save customer contact information to the CRM. Call this when you have collected " +
-            "the customer's name, email, or phone number. You can call this multiple times " +
-            "as you collect more information.",
-            buildSaveLeadParameters()
+        // save_customer_lead
+        tools.add(createToolDefinition(
+            "save_customer_lead",
+            "Save customer contact information and travel requirements to CRM",
+            createLeadParams()
         ));
         
-        // Create Quote function
-        tools.add(new ClientEvents.ToolDefinition(
-            Constants.FUNCTION_CREATE_QUOTE,
-            "Generate and save a price quote for the customer. Call this when the customer " +
-            "requests a quote or when you have enough information to provide pricing.",
-            buildCreateQuoteParameters()
+        // get_packages
+        tools.add(createToolDefinition(
+            "get_packages",
+            "Search and get travel packages from the catalog based on filters",
+            createPackageParams()
         ));
         
-        // Disconnect Call function
-        tools.add(new ClientEvents.ToolDefinition(
-            Constants.FUNCTION_DISCONNECT_CALL,
-            "End the current conversation. Call this when the customer says goodbye, " +
-            "indicates they want to end the conversation, or when the interaction is complete.",
-            buildDisconnectParameters()
+        // disconnect_call
+        tools.add(createToolDefinition(
+            "disconnect_call",
+            "End the conversation when customer is done or wants to leave",
+            createEmptyParams()
         ));
         
         return tools;
     }
     
     /**
-     * Build parameters schema for save_customer_lead function
+     * Get tool definitions as List
+     * For compatibility with code that expects List<ToolDefinition>
      */
-    private JsonObject buildSaveLeadParameters() {
+    public List<ClientEvents.ToolDefinition> getToolDefinitions() {
+        List<ClientEvents.ToolDefinition> tools = new ArrayList<>();
+        
+        tools.add(new ClientEvents.ToolDefinition(
+            "save_customer_lead",
+            "Save customer contact information and travel requirements to CRM",
+            createLeadParams()
+        ));
+        
+        tools.add(new ClientEvents.ToolDefinition(
+            "get_packages",
+            "Search and get travel packages from the catalog based on filters",
+            createPackageParams()
+        ));
+        
+        tools.add(new ClientEvents.ToolDefinition(
+            "disconnect_call",
+            "End the conversation when customer is done or wants to leave",
+            createEmptyParams()
+        ));
+        
+        return tools;
+    }
+    
+    /**
+     * Create a tool definition JsonObject
+     */
+    private JsonObject createToolDefinition(String name, String description, JsonObject parameters) {
+        JsonObject tool = new JsonObject();
+        tool.addProperty("type", "function");
+        tool.addProperty("name", name);
+        tool.addProperty("description", description);
+        tool.add("parameters", parameters);
+        return tool;
+    }
+    
+    /**
+     * Create parameters for save_customer_lead
+     */
+    private JsonObject createLeadParams() {
         JsonObject params = new JsonObject();
         params.addProperty("type", "object");
         
-        JsonObject properties = new JsonObject();
+        JsonObject props = new JsonObject();
         
-        // Name property
+        // name
         JsonObject name = new JsonObject();
         name.addProperty("type", "string");
         name.addProperty("description", "Customer's full name");
-        properties.add("name", name);
+        props.add("name", name);
         
-        // Email property
+        // email
         JsonObject email = new JsonObject();
         email.addProperty("type", "string");
         email.addProperty("description", "Customer's email address");
-        properties.add("email", email);
+        props.add("email", email);
         
-        // Phone property
-        JsonObject phone = new JsonObject();
-        phone.addProperty("type", "string");
-        phone.addProperty("description", "Customer's phone number");
-        properties.add("phone", phone);
+        // mobile
+        JsonObject mobile = new JsonObject();
+        mobile.addProperty("type", "string");
+        mobile.addProperty("description", "Customer's mobile/phone number");
+        props.add("mobile", mobile);
         
-        // Company property
-        JsonObject company = new JsonObject();
-        company.addProperty("type", "string");
-        company.addProperty("description", "Customer's company or organization name");
-        properties.add("company", company);
+        // destination
+        JsonObject destination = new JsonObject();
+        destination.addProperty("type", "string");
+        destination.addProperty("description", "Desired travel destination");
+        props.add("destination", destination);
         
-        // Interests property
-        JsonObject interests = new JsonObject();
-        interests.addProperty("type", "string");
-        interests.addProperty("description", "What the customer is interested in");
-        properties.add("interests", interests);
+        // travel_date
+        JsonObject travelDate = new JsonObject();
+        travelDate.addProperty("type", "string");
+        travelDate.addProperty("description", "Preferred travel date (YYYY-MM-DD format)");
+        props.add("travel_date", travelDate);
         
-        // Notes property
-        JsonObject notes = new JsonObject();
-        notes.addProperty("type", "string");
-        notes.addProperty("description", "Additional notes about the customer or conversation");
-        properties.add("notes", notes);
+        // adults
+        JsonObject adults = new JsonObject();
+        adults.addProperty("type", "integer");
+        adults.addProperty("description", "Number of adult travelers");
+        props.add("adults", adults);
         
-        params.add("properties", properties);
+        // children
+        JsonObject children = new JsonObject();
+        children.addProperty("type", "integer");
+        children.addProperty("description", "Number of children");
+        props.add("children", children);
         
-        // At least one contact method required
+        // nights
+        JsonObject nights = new JsonObject();
+        nights.addProperty("type", "integer");
+        nights.addProperty("description", "Number of nights for the trip");
+        props.add("nights", nights);
+        
+        // hotel_type
+        JsonObject hotelType = new JsonObject();
+        hotelType.addProperty("type", "string");
+        hotelType.addProperty("description", "Preferred hotel category");
+        JsonArray hotelEnum = new JsonArray();
+        hotelEnum.add("budget");
+        hotelEnum.add("standard");
+        hotelEnum.add("luxury");
+        hotelEnum.add("premium");
+        hotelType.add("enum", hotelEnum);
+        props.add("hotel_type", hotelType);
+        
+        // budget
+        JsonObject budget = new JsonObject();
+        budget.addProperty("type", "number");
+        budget.addProperty("description", "Customer's budget in INR");
+        props.add("budget", budget);
+        
+        // special_requirements
+        JsonObject special = new JsonObject();
+        special.addProperty("type", "string");
+        special.addProperty("description", "Any special requirements (honeymoon, anniversary, dietary, etc.)");
+        props.add("special_requirements", special);
+        
+        params.add("properties", props);
+        
+        // Required fields
         JsonArray required = new JsonArray();
         required.add("name");
         params.add("required", required);
@@ -141,105 +222,68 @@ public class FunctionRegistry {
     }
     
     /**
-     * Build parameters schema for create_quote function
+     * Create parameters for get_packages
      */
-    private JsonObject buildCreateQuoteParameters() {
+    private JsonObject createPackageParams() {
         JsonObject params = new JsonObject();
         params.addProperty("type", "object");
         
-        JsonObject properties = new JsonObject();
+        JsonObject props = new JsonObject();
         
-        // Customer name
-        JsonObject customerName = new JsonObject();
-        customerName.addProperty("type", "string");
-        customerName.addProperty("description", "Customer's name for the quote");
-        properties.add("customerName", customerName);
+        // destination
+        JsonObject destination = new JsonObject();
+        destination.addProperty("type", "string");
+        destination.addProperty("description", "Destination to filter packages");
+        props.add("destination", destination);
         
-        // Customer email
-        JsonObject customerEmail = new JsonObject();
-        customerEmail.addProperty("type", "string");
-        customerEmail.addProperty("description", "Customer's email to send the quote");
-        properties.add("customerEmail", customerEmail);
+        // budget_min
+        JsonObject budgetMin = new JsonObject();
+        budgetMin.addProperty("type", "number");
+        budgetMin.addProperty("description", "Minimum budget in INR");
+        props.add("budget_min", budgetMin);
         
-        // Items array
-        JsonObject items = new JsonObject();
-        items.addProperty("type", "array");
-        items.addProperty("description", "List of items/services to quote");
+        // budget_max
+        JsonObject budgetMax = new JsonObject();
+        budgetMax.addProperty("type", "number");
+        budgetMax.addProperty("description", "Maximum budget in INR");
+        props.add("budget_max", budgetMax);
         
-        JsonObject itemSchema = new JsonObject();
-        itemSchema.addProperty("type", "object");
+        // nights
+        JsonObject nights = new JsonObject();
+        nights.addProperty("type", "integer");
+        nights.addProperty("description", "Preferred number of nights");
+        props.add("nights", nights);
         
-        JsonObject itemProperties = new JsonObject();
+        // package_type
+        JsonObject packageType = new JsonObject();
+        packageType.addProperty("type", "string");
+        packageType.addProperty("description", "Package type: with_flight or without_flight");
+        JsonArray typeEnum = new JsonArray();
+        typeEnum.add("with_flight");
+        typeEnum.add("without_flight");
+        packageType.add("enum", typeEnum);
+        props.add("package_type", packageType);
         
-        JsonObject description = new JsonObject();
-        description.addProperty("type", "string");
-        description.addProperty("description", "Description of the item or service");
-        itemProperties.add("description", description);
+        // limit
+        JsonObject limit = new JsonObject();
+        limit.addProperty("type", "integer");
+        limit.addProperty("description", "Maximum number of packages to return (default 5)");
+        props.add("limit", limit);
         
-        JsonObject quantity = new JsonObject();
-        quantity.addProperty("type", "integer");
-        quantity.addProperty("description", "Quantity");
-        itemProperties.add("quantity", quantity);
-        
-        JsonObject unitPrice = new JsonObject();
-        unitPrice.addProperty("type", "number");
-        unitPrice.addProperty("description", "Price per unit");
-        itemProperties.add("unitPrice", unitPrice);
-        
-        itemSchema.add("properties", itemProperties);
-        items.add("items", itemSchema);
-        
-        properties.add("items", items);
-        
-        // Notes
-        JsonObject notes = new JsonObject();
-        notes.addProperty("type", "string");
-        notes.addProperty("description", "Additional notes for the quote");
-        properties.add("notes", notes);
-        
-        params.add("properties", properties);
-        
-        JsonArray required = new JsonArray();
-        required.add("customerName");
-        required.add("items");
-        params.add("required", required);
+        params.add("properties", props);
+        params.add("required", new JsonArray());
         
         return params;
     }
     
     /**
-     * Build parameters schema for disconnect_call function
+     * Create empty parameters object
      */
-    private JsonObject buildDisconnectParameters() {
+    private JsonObject createEmptyParams() {
         JsonObject params = new JsonObject();
         params.addProperty("type", "object");
-        
-        JsonObject properties = new JsonObject();
-        
-        // Reason property
-        JsonObject reason = new JsonObject();
-        reason.addProperty("type", "string");
-        reason.addProperty("description", "Reason for ending the call");
-        JsonArray reasonEnum = new JsonArray();
-        reasonEnum.add("customer_goodbye");
-        reasonEnum.add("task_completed");
-        reasonEnum.add("customer_request");
-        reasonEnum.add("other");
-        reason.add("enum", reasonEnum);
-        properties.add("reason", reason);
-        
-        // Summary property
-        JsonObject summary = new JsonObject();
-        summary.addProperty("type", "string");
-        summary.addProperty("description", "Brief summary of the conversation");
-        properties.add("summary", summary);
-        
-        params.add("properties", properties);
-        
-        JsonArray required = new JsonArray();
-        required.add("reason");
-        params.add("required", required);
-        
+        params.add("properties", new JsonObject());
+        params.add("required", new JsonArray());
         return params;
     }
 }
