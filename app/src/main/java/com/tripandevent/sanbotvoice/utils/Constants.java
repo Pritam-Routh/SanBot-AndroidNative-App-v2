@@ -17,7 +17,14 @@ public final class Constants {
     // ============================================
     // API ENDPOINTS
     // ============================================
-    
+    // CRM Configuration
+    public static final String CRM_BASE_URL = "https://crm.tripandevent.com";
+    public static final String CRM_API_KEY = "YOUR_CRM_API_KEY_HERE"; // Get from CRM admin
+    public static final int CRM_COMPANY_ID = 1; // Your company ID in CRM
+
+    // Voice Agent Source Tracking
+    public static final String LEAD_SOURCE = "Voice Agent";
+    public static final String LEAD_SOURCE_TYPE = "voice_agent";
     /**
      * Backend base URL (configured in gradle.properties)
      * Test backend: https://openai-realtime-backend-v1.onrender.com
@@ -118,4 +125,16 @@ public final class Constants {
     public static final String TAG_AUDIO = "Audio";
     public static final String TAG_SERVICE = "VoiceService";
     public static final String TAG_FUNCTION = "Function";
+
+
+    // AI Instructions
+    public static final String DEFAULT_AI_INSTRUCTIONS = 
+        "You are a helpful, friendly travel assistant for Trip & Event. " +
+        "Help customers plan their perfect vacation. Be warm, enthusiastic, and knowledgeable. " +
+        "Ask about their travel preferences, suggest destinations, and offer to create quotes. " +
+        "Always try to collect customer contact information for follow-up.";
+
+    // Robot Motion Settings
+    public static final boolean ENABLE_ROBOT_MOTION = true;
+    public static final int MOTION_DELAY_MS = 100; // Delay before executing motion for sync
 }

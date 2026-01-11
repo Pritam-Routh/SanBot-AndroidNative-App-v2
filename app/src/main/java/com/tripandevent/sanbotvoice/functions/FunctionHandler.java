@@ -2,33 +2,33 @@ package com.tripandevent.sanbotvoice.functions;
 
 /**
  * Interface for function handlers.
- * Each function that the AI can call must implement this interface.
+ * Each function that can be called by the AI implements this interface.
  */
 public interface FunctionHandler {
     
     /**
-     * Execute the function with the given arguments.
-     * 
-     * @param arguments JSON string of function arguments from the AI
-     * @param sessionId Current session ID
-     * @param callback Callback for async result
-     */
-    void execute(String arguments, String sessionId, FunctionCallback callback);
-    
-    /**
-     * Callback interface for function results
+     * Callback for function execution results
      */
     interface FunctionCallback {
         /**
-         * Called when function completes successfully
-         * @param result JSON string result to send back to AI
+         * Called when function execution succeeds
+         * @param result JSON result to send back to AI
          */
         void onSuccess(String result);
         
         /**
-         * Called when function fails
+         * Called when function execution fails
          * @param error Error message
          */
         void onError(String error);
     }
+    
+    /**
+     * Execute the function
+     * 
+     * @param arguments JSON string of arguments from AI
+     * @param sessionId Current session ID
+     * @param callback Callback for result
+     */
+    void execute(String arguments, String sessionId, FunctionCallback callback);
 }

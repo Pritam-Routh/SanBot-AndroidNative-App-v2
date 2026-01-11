@@ -1,5 +1,6 @@
 package com.tripandevent.sanbotvoice.functions;
 
+import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
 
@@ -11,63 +12,46 @@ import java.util.concurrent.Executors;
 
 /**
  * Executor for handling function calls from the AI.
- * 
- * When the AI decides to call a function, this class:
- * 1. Looks up the appropriate handler
- * 2. Executes the function asynchronously
- * 3. Returns the result to be sent back to the AI
+ * Routes function calls to appropriate handlers.
  */
 public class FunctionExecutor {
     
     private static final String TAG = "FunctionExecutor";
     
-    private final FunctionRegistry registry;
     private final ExecutorService executor;
     private final Handler mainHandler;
     
-    /**
-     * Callback for function execution results
-     */
+    // Function handlers
+    private CrmFunctionHandlers crmHandlers;
+    private RobotMotionFunctions robotMotionFunctions;
+    
+    // Context for handlers that need it
+    private Context context;
+    
     public interface ExecutionCallback {
-        /**
-         * Called when function execution completes
-         * @param callId The function call ID from the AI
-         * @param result The result JSON to send back to the AI
-         */
         void onFunctionResult(String callId, String result);
-        
-        /**
-         * Called when function execution fails
-         * @param callId The function call ID from the AI
-         * @param error Error message
-         */
         void onFunctionError(String callId, String error);
     }
     
     public FunctionExecutor() {
-        this.registry = new FunctionRegistry();
         this.executor = Executors.newCachedThreadPool();
         this.mainHandler = new Handler(Looper.getMainLooper());
+        this.crmHandlers = new CrmFunctionHandlers();
     }
     
     /**
-     * Get the function registry (for session configuration)
+     * Set context for handlers that need Android context
      */
-    public FunctionRegistry getRegistry() {
-        return registry;
+    public void setContext(Context context) {
+        this.context = context.getApplicationContext();
+        this.robotMotionFunctions = new RobotMotionFunctions(context);
     }
     
     /**
-     * Handle a function call from a server event
-     * 
-     * @param event The parsed server event containing function call info
-     * @param sessionId Current session ID
-     * @param callback Callback for the result
+     * Handle function call from server event
      */
-    public void handleFunctionCall(ServerEvents.ParsedEvent event, String sessionId, 
+    public void handleFunctionCall(ServerEvents.ParsedEvent event, String sessionId,
                                    ExecutionCallback callback) {
-        
-        // Get function call info from response.done event
         ServerEvents.ResponseInfo responseInfo = event.getResponseInfo();
         if (responseInfo == null || !responseInfo.hasFunctionCall()) {
             Logger.w(TAG, "No function call found in event");
@@ -85,73 +69,115 @@ public class FunctionExecutor {
     }
     
     /**
-     * Execute a function call
-     * 
-     * @param callId Function call ID
-     * @param functionName Name of the function to call
-     * @param arguments JSON string of arguments
-     * @param sessionId Current session ID
-     * @param callback Callback for the result
+     * Execute a function call by name
      */
     public void executeFunctionCall(String callId, String functionName, String arguments,
                                     String sessionId, ExecutionCallback callback) {
         
-        Logger.function("Executing function: %s (callId: %s)", functionName, callId);
+        Logger.function("Executing: %s (callId: %s)", functionName, callId);
         Logger.function("Arguments: %s", arguments);
         
-        // Look up handler
-        FunctionHandler handler = registry.getHandler(functionName);
-        if (handler == null) {
-            Logger.e(TAG, "Unknown function: %s", functionName);
-            notifyError(callback, callId, "Unknown function: " + functionName);
-            return;
-        }
-        
-        // Execute asynchronously
         executor.execute(() -> {
             try {
-                handler.execute(arguments, sessionId, new FunctionHandler.FunctionCallback() {
+                FunctionHandler.FunctionCallback funcCallback = new FunctionHandler.FunctionCallback() {
                     @Override
                     public void onSuccess(String result) {
-                        Logger.function("Function %s completed successfully", functionName);
+                        Logger.function("Function %s completed", functionName);
                         notifyResult(callback, callId, result);
                     }
                     
                     @Override
                     public void onError(String error) {
                         Logger.e(TAG, "Function %s failed: %s", functionName, error);
-                        // Return error as a result so AI can handle gracefully
                         String errorResult = "{\"success\":false,\"error\":\"" + 
                             error.replace("\"", "\\\"") + "\"}";
                         notifyResult(callback, callId, errorResult);
                     }
-                });
+                };
+                
+                switch (functionName) {
+                    // CRM Functions
+                    case "save_customer_lead":
+                        crmHandlers.saveCustomerLead(arguments, sessionId, funcCallback);
+                        break;
+                        
+                    case "get_packages":
+                        crmHandlers.getPackages(arguments, sessionId, funcCallback);
+                        break;
+                        
+                    case "get_package_details":
+                        crmHandlers.getPackageDetails(arguments, sessionId, funcCallback);
+                        break;
+                        
+                    case "search_packages":
+                        crmHandlers.searchPackages(arguments, sessionId, funcCallback);
+                        break;
+                    
+                    // Robot Motion Functions
+                    case "robot_gesture":
+                        if (robotMotionFunctions != null) {
+                            robotMotionFunctions.executeGesture(arguments, funcCallback);
+                        } else {
+                            funcCallback.onSuccess("{\"success\":true,\"message\":\"Robot motion not available\"}");
+                        }
+                        break;
+                        
+                    case "robot_emotion":
+                        if (robotMotionFunctions != null) {
+                            robotMotionFunctions.showEmotion(arguments, funcCallback);
+                        } else {
+                            funcCallback.onSuccess("{\"success\":true,\"message\":\"Robot motion not available\"}");
+                        }
+                        break;
+                        
+                    case "robot_look":
+                        if (robotMotionFunctions != null) {
+                            robotMotionFunctions.moveHead(arguments, funcCallback);
+                        } else {
+                            funcCallback.onSuccess("{\"success\":true,\"message\":\"Robot motion not available\"}");
+                        }
+                        break;
+                        
+                    case "robot_move_hands":
+                        if (robotMotionFunctions != null) {
+                            robotMotionFunctions.moveHands(arguments, funcCallback);
+                        } else {
+                            funcCallback.onSuccess("{\"success\":true,\"message\":\"Robot motion not available\"}");
+                        }
+                        break;
+                        
+                    case "robot_move_body":
+                        if (robotMotionFunctions != null) {
+                            robotMotionFunctions.moveBody(arguments, funcCallback);
+                        } else {
+                            funcCallback.onSuccess("{\"success\":true,\"message\":\"Robot motion not available\"}");
+                        }
+                        break;
+                    
+                    // Disconnect
+                    case "disconnect_call":
+                        funcCallback.onSuccess("{\"success\":true,\"action\":\"disconnect\"}");
+                        break;
+                        
+                    default:
+                        Logger.w(TAG, "Unknown function: %s", functionName);
+                        funcCallback.onError("Unknown function: " + functionName);
+                        break;
+                }
+                
             } catch (Exception e) {
                 Logger.e(e, "Exception executing function %s", functionName);
-                String errorResult = "{\"success\":false,\"error\":\"Internal error: " + 
+                String errorResult = "{\"success\":false,\"error\":\"" + 
                     e.getMessage().replace("\"", "\\\"") + "\"}";
                 notifyResult(callback, callId, errorResult);
             }
         });
     }
     
-    /**
-     * Notify callback of result on main thread
-     */
     private void notifyResult(ExecutionCallback callback, String callId, String result) {
         mainHandler.post(() -> callback.onFunctionResult(callId, result));
     }
     
-    /**
-     * Notify callback of error on main thread
-     */
-    private void notifyError(ExecutionCallback callback, String callId, String error) {
-        mainHandler.post(() -> callback.onFunctionError(callId, error));
-    }
-    
-    /**
-     * Shutdown the executor
-     */
     public void shutdown() {
         executor.shutdown();
     }

@@ -10,23 +10,23 @@
 10
 11    <!-- Permissions -->
 12    <uses-permission android:name="android.permission.INTERNET" />
-12-->D:\Personal-Projects\SanbotVoiceAgent\app\src\main\AndroidManifest.xml:5:5-67
-12-->D:\Personal-Projects\SanbotVoiceAgent\app\src\main\AndroidManifest.xml:5:22-64
+12-->D:\Personal-Projects\SanBot-AndroidNative-App-v2\app\src\main\AndroidManifest.xml:5:5-67
+12-->D:\Personal-Projects\SanBot-AndroidNative-App-v2\app\src\main\AndroidManifest.xml:5:22-64
 13    <uses-permission android:name="android.permission.RECORD_AUDIO" />
-13-->D:\Personal-Projects\SanbotVoiceAgent\app\src\main\AndroidManifest.xml:6:5-71
-13-->D:\Personal-Projects\SanbotVoiceAgent\app\src\main\AndroidManifest.xml:6:22-68
+13-->D:\Personal-Projects\SanBot-AndroidNative-App-v2\app\src\main\AndroidManifest.xml:6:5-71
+13-->D:\Personal-Projects\SanBot-AndroidNative-App-v2\app\src\main\AndroidManifest.xml:6:22-68
 14    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
-14-->D:\Personal-Projects\SanbotVoiceAgent\app\src\main\AndroidManifest.xml:7:5-80
-14-->D:\Personal-Projects\SanbotVoiceAgent\app\src\main\AndroidManifest.xml:7:22-77
+14-->D:\Personal-Projects\SanBot-AndroidNative-App-v2\app\src\main\AndroidManifest.xml:7:5-80
+14-->D:\Personal-Projects\SanBot-AndroidNative-App-v2\app\src\main\AndroidManifest.xml:7:22-77
 15    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-15-->D:\Personal-Projects\SanbotVoiceAgent\app\src\main\AndroidManifest.xml:8:5-77
-15-->D:\Personal-Projects\SanbotVoiceAgent\app\src\main\AndroidManifest.xml:8:22-74
+15-->D:\Personal-Projects\SanBot-AndroidNative-App-v2\app\src\main\AndroidManifest.xml:8:5-77
+15-->D:\Personal-Projects\SanBot-AndroidNative-App-v2\app\src\main\AndroidManifest.xml:8:22-74
 16    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
-16-->D:\Personal-Projects\SanbotVoiceAgent\app\src\main\AndroidManifest.xml:9:5-88
-16-->D:\Personal-Projects\SanbotVoiceAgent\app\src\main\AndroidManifest.xml:9:22-85
+16-->D:\Personal-Projects\SanBot-AndroidNative-App-v2\app\src\main\AndroidManifest.xml:9:5-88
+16-->D:\Personal-Projects\SanBot-AndroidNative-App-v2\app\src\main\AndroidManifest.xml:9:22-85
 17    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-17-->D:\Personal-Projects\SanbotVoiceAgent\app\src\main\AndroidManifest.xml:10:5-77
-17-->D:\Personal-Projects\SanbotVoiceAgent\app\src\main\AndroidManifest.xml:10:22-74
+17-->D:\Personal-Projects\SanBot-AndroidNative-App-v2\app\src\main\AndroidManifest.xml:10:5-77
+17-->D:\Personal-Projects\SanBot-AndroidNative-App-v2\app\src\main\AndroidManifest.xml:10:22-74
 18
 19    <permission
 19-->[androidx.core:core:1.12.0] C:\Users\prita\.gradle\caches\9.0-milestone-1\transforms\30962eb45d6c0bb2a118bd361b92ee2c\transformed\core-1.12.0\AndroidManifest.xml:22:5-24:47
@@ -43,58 +43,58 @@
 24-->[io.getstream:stream-webrtc-android:1.1.0] C:\Users\prita\.gradle\caches\9.0-milestone-1\transforms\0cce1464e68684d3a4e837c0d75d503e\transformed\stream-webrtc-android-1.1.0\AndroidManifest.xml:23:22-76
 25
 26    <application
-26-->D:\Personal-Projects\SanbotVoiceAgent\app\src\main\AndroidManifest.xml:12:5-38:19
+26-->D:\Personal-Projects\SanBot-AndroidNative-App-v2\app\src\main\AndroidManifest.xml:12:5-38:19
 27        android:name="com.tripandevent.sanbotvoice.SanbotVoiceApp"
-27-->D:\Personal-Projects\SanbotVoiceAgent\app\src\main\AndroidManifest.xml:13:9-39
+27-->D:\Personal-Projects\SanBot-AndroidNative-App-v2\app\src\main\AndroidManifest.xml:13:9-39
 28        android:allowBackup="true"
-28-->D:\Personal-Projects\SanbotVoiceAgent\app\src\main\AndroidManifest.xml:14:9-35
+28-->D:\Personal-Projects\SanBot-AndroidNative-App-v2\app\src\main\AndroidManifest.xml:14:9-35
 29        android:appComponentFactory="androidx.core.app.CoreComponentFactory"
 29-->[androidx.core:core:1.12.0] C:\Users\prita\.gradle\caches\9.0-milestone-1\transforms\30962eb45d6c0bb2a118bd361b92ee2c\transformed\core-1.12.0\AndroidManifest.xml:28:18-86
 30        android:debuggable="true"
 31        android:extractNativeLibs="true"
 32        android:icon="@mipmap/ic_launcher"
-32-->D:\Personal-Projects\SanbotVoiceAgent\app\src\main\AndroidManifest.xml:15:9-43
+32-->D:\Personal-Projects\SanBot-AndroidNative-App-v2\app\src\main\AndroidManifest.xml:15:9-43
 33        android:label="@string/app_name"
-33-->D:\Personal-Projects\SanbotVoiceAgent\app\src\main\AndroidManifest.xml:16:9-41
+33-->D:\Personal-Projects\SanBot-AndroidNative-App-v2\app\src\main\AndroidManifest.xml:16:9-41
 34        android:networkSecurityConfig="@xml/network_security_config"
-34-->D:\Personal-Projects\SanbotVoiceAgent\app\src\main\AndroidManifest.xml:20:9-69
+34-->D:\Personal-Projects\SanBot-AndroidNative-App-v2\app\src\main\AndroidManifest.xml:20:9-69
 35        android:roundIcon="@mipmap/ic_launcher_round"
-35-->D:\Personal-Projects\SanbotVoiceAgent\app\src\main\AndroidManifest.xml:17:9-54
+35-->D:\Personal-Projects\SanBot-AndroidNative-App-v2\app\src\main\AndroidManifest.xml:17:9-54
 36        android:supportsRtl="true"
-36-->D:\Personal-Projects\SanbotVoiceAgent\app\src\main\AndroidManifest.xml:18:9-35
+36-->D:\Personal-Projects\SanBot-AndroidNative-App-v2\app\src\main\AndroidManifest.xml:18:9-35
 37        android:testOnly="true"
 38        android:theme="@style/Theme.SanbotVoiceAgent" >
-38-->D:\Personal-Projects\SanbotVoiceAgent\app\src\main\AndroidManifest.xml:19:9-54
+38-->D:\Personal-Projects\SanBot-AndroidNative-App-v2\app\src\main\AndroidManifest.xml:19:9-54
 39        <activity
-39-->D:\Personal-Projects\SanbotVoiceAgent\app\src\main\AndroidManifest.xml:22:9-30:20
+39-->D:\Personal-Projects\SanBot-AndroidNative-App-v2\app\src\main\AndroidManifest.xml:22:9-30:20
 40            android:name="com.tripandevent.sanbotvoice.MainActivity"
-40-->D:\Personal-Projects\SanbotVoiceAgent\app\src\main\AndroidManifest.xml:23:13-41
+40-->D:\Personal-Projects\SanBot-AndroidNative-App-v2\app\src\main\AndroidManifest.xml:23:13-41
 41            android:exported="true"
-41-->D:\Personal-Projects\SanbotVoiceAgent\app\src\main\AndroidManifest.xml:24:13-36
+41-->D:\Personal-Projects\SanBot-AndroidNative-App-v2\app\src\main\AndroidManifest.xml:24:13-36
 42            android:launchMode="singleTop" >
-42-->D:\Personal-Projects\SanbotVoiceAgent\app\src\main\AndroidManifest.xml:25:13-43
+42-->D:\Personal-Projects\SanBot-AndroidNative-App-v2\app\src\main\AndroidManifest.xml:25:13-43
 43            <intent-filter>
-43-->D:\Personal-Projects\SanbotVoiceAgent\app\src\main\AndroidManifest.xml:26:13-29:29
+43-->D:\Personal-Projects\SanBot-AndroidNative-App-v2\app\src\main\AndroidManifest.xml:26:13-29:29
 44                <action android:name="android.intent.action.MAIN" />
-44-->D:\Personal-Projects\SanbotVoiceAgent\app\src\main\AndroidManifest.xml:27:17-69
-44-->D:\Personal-Projects\SanbotVoiceAgent\app\src\main\AndroidManifest.xml:27:25-66
+44-->D:\Personal-Projects\SanBot-AndroidNative-App-v2\app\src\main\AndroidManifest.xml:27:17-69
+44-->D:\Personal-Projects\SanBot-AndroidNative-App-v2\app\src\main\AndroidManifest.xml:27:25-66
 45
 46                <category android:name="android.intent.category.LAUNCHER" />
-46-->D:\Personal-Projects\SanbotVoiceAgent\app\src\main\AndroidManifest.xml:28:17-77
-46-->D:\Personal-Projects\SanbotVoiceAgent\app\src\main\AndroidManifest.xml:28:27-74
+46-->D:\Personal-Projects\SanBot-AndroidNative-App-v2\app\src\main\AndroidManifest.xml:28:17-77
+46-->D:\Personal-Projects\SanBot-AndroidNative-App-v2\app\src\main\AndroidManifest.xml:28:27-74
 47            </intent-filter>
 48        </activity>
 49
 50        <service
-50-->D:\Personal-Projects\SanbotVoiceAgent\app\src\main\AndroidManifest.xml:32:9-36:58
+50-->D:\Personal-Projects\SanBot-AndroidNative-App-v2\app\src\main\AndroidManifest.xml:32:9-36:58
 51            android:name="com.tripandevent.sanbotvoice.core.VoiceAgentService"
-51-->D:\Personal-Projects\SanbotVoiceAgent\app\src\main\AndroidManifest.xml:33:13-51
+51-->D:\Personal-Projects\SanBot-AndroidNative-App-v2\app\src\main\AndroidManifest.xml:33:13-51
 52            android:enabled="true"
-52-->D:\Personal-Projects\SanbotVoiceAgent\app\src\main\AndroidManifest.xml:34:13-35
+52-->D:\Personal-Projects\SanBot-AndroidNative-App-v2\app\src\main\AndroidManifest.xml:34:13-35
 53            android:exported="false"
-53-->D:\Personal-Projects\SanbotVoiceAgent\app\src\main\AndroidManifest.xml:35:13-37
+53-->D:\Personal-Projects\SanBot-AndroidNative-App-v2\app\src\main\AndroidManifest.xml:35:13-37
 54            android:foregroundServiceType="microphone" />
-54-->D:\Personal-Projects\SanbotVoiceAgent\app\src\main\AndroidManifest.xml:36:13-55
+54-->D:\Personal-Projects\SanBot-AndroidNative-App-v2\app\src\main\AndroidManifest.xml:36:13-55
 55
 56        <provider
 56-->[androidx.emoji2:emoji2:1.2.0] C:\Users\prita\.gradle\caches\9.0-milestone-1\transforms\a2a735631f39cde734b6b1017cb38bb6\transformed\emoji2-1.2.0\AndroidManifest.xml:24:9-32:20

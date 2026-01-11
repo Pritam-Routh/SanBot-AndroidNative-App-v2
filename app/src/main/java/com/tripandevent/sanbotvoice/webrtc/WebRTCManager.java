@@ -10,6 +10,7 @@ import com.tripandevent.sanbotvoice.openai.events.ClientEvents;
 import com.tripandevent.sanbotvoice.openai.events.ServerEvents;
 import com.tripandevent.sanbotvoice.utils.Constants;
 import com.tripandevent.sanbotvoice.utils.Logger;
+import com.google.gson.JsonObject;
 
 import org.webrtc.AudioSource;
 import org.webrtc.AudioTrack;
@@ -444,6 +445,11 @@ public class WebRTCManager {
         }, answer);
     }
 
+/**
+ * Send function call result back to OpenAI (GA format)
+ * 
+ * GA format uses conversation.item.create with type="function_call_output"
+ */
     public void sendFunctionResult(String callId, String result) {
         if (dataChannel == null || dataChannel.state() != DataChannel.State.OPEN) {
             Logger.e(TAG, "Cannot send function result - data channel not open");
@@ -451,22 +457,33 @@ public class WebRTCManager {
         }
         
         try {
-            // Create conversation.item.create event with function_call_output
-            String event = String.format(
-                "{\"type\":\"conversation.item.create\",\"item\":{\"type\":\"function_call_output\",\"call_id\":\"%s\",\"output\":\"%s\"}}",
-                callId,
-                result.replace("\"", "\\\"")
-            );
+            // Create function output item (GA format)
+            // Per docs: type="function_call_output", call_id, output
+            JsonObject event = new JsonObject();
+            event.addProperty("type", "conversation.item.create");
             
-            ByteBuffer buffer = ByteBuffer.wrap(event.getBytes(StandardCharsets.UTF_8));
+            JsonObject item = new JsonObject();
+            item.addProperty("type", "function_call_output");
+            item.addProperty("call_id", callId);
+            item.addProperty("output", result);
+            
+            event.add("item", item);
+            
+            String eventJson = event.toString();
+            ByteBuffer buffer = ByteBuffer.wrap(eventJson.getBytes(StandardCharsets.UTF_8));
             dataChannel.send(new DataChannel.Buffer(buffer, false));
             
             Logger.d(TAG, "Sent function result for call: %s", callId);
             
-            // Trigger response generation
-            String responseEvent = "{\"type\":\"response.create\"}";
-            ByteBuffer responseBuffer = ByteBuffer.wrap(responseEvent.getBytes(StandardCharsets.UTF_8));
+            // Trigger response generation after providing function output
+            JsonObject responseEvent = new JsonObject();
+            responseEvent.addProperty("type", "response.create");
+            
+            String responseJson = responseEvent.toString();
+            ByteBuffer responseBuffer = ByteBuffer.wrap(responseJson.getBytes(StandardCharsets.UTF_8));
             dataChannel.send(new DataChannel.Buffer(responseBuffer, false));
+            
+            Logger.d(TAG, "Triggered response after function result");
             
         } catch (Exception e) {
             Logger.e(e, "Failed to send function result");

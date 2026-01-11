@@ -8,7 +8,9 @@ import android.app.Service;
 import android.content.Intent;
 import android.os.Binder;
 import android.os.Build;
+import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
@@ -20,7 +22,9 @@ import com.tripandevent.sanbotvoice.audio.AudioProcessor;
 import com.tripandevent.sanbotvoice.audio.SpeakerIdentifier;
 import com.tripandevent.sanbotvoice.analytics.ConversationAnalytics;
 import com.tripandevent.sanbotvoice.functions.FunctionExecutor;
+import com.tripandevent.sanbotvoice.openai.events.ClientEvents;
 import com.tripandevent.sanbotvoice.openai.events.ServerEvents;
+import com.tripandevent.sanbotvoice.sanbot.SanbotMotionManager;
 import com.tripandevent.sanbotvoice.utils.Constants;
 import com.tripandevent.sanbotvoice.utils.Logger;
 import com.tripandevent.sanbotvoice.webrtc.WebRTCManager;
@@ -29,6 +33,7 @@ import org.webrtc.AudioTrack;
 
 /**
  * Foreground service that manages the voice conversation lifecycle.
+ * Integrates with Sanbot robot motion for interactive responses.
  */
 public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCallback {
     
@@ -37,6 +42,7 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
     private static final String CHANNEL_ID = "voice_agent_channel";
     
     private final IBinder binder = new LocalBinder();
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
     
     // Core components
     private WebRTCManager webRTCManager;
@@ -45,6 +51,7 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
     private AudioBooster audioBooster;
     private SpeakerIdentifier speakerIdentifier;
     private ConversationAnalytics analytics;
+    private SanbotMotionManager sanbotMotionManager;
     
     // State
     private ConversationState currentState = ConversationState.IDLE;
@@ -52,11 +59,18 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
     private String currentSessionId;
     private long conversationStartTime;
     private int messageCount;
+    private boolean sessionConfigured = false;
     
     // Transcript accumulation
     private StringBuilder currentTranscript = new StringBuilder();
     private StringBuilder userTranscript = new StringBuilder();
     private StringBuilder aiTranscript = new StringBuilder();
+    
+    // AI instructions (can be customized)
+    private String aiInstructions = "You are a helpful, friendly travel assistant for Trip & Event. " +
+        "Help customers plan their perfect vacation. Be warm, enthusiastic, and knowledgeable. " +
+        "Ask about their travel preferences, suggest destinations, and offer to create quotes. " +
+        "Always try to collect customer contact information for follow-up.";
     
     /**
      * Listener interface for UI updates
@@ -84,11 +98,15 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
         webRTCManager = new WebRTCManager(this, this);
         webRTCManager.initialize();
         
-        // Initialize function executor
+        // Initialize function executor with context for robot motion
         functionExecutor = new FunctionExecutor();
+        functionExecutor.setContext(this);
         
         // Initialize audio booster
         audioBooster = new AudioBooster(this);
+        
+        // Initialize Sanbot motion manager
+        sanbotMotionManager = SanbotMotionManager.getInstance(this);
         
         // Initialize audio processor
         audioProcessor = new AudioProcessor(this);
@@ -98,6 +116,10 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
                 Logger.d(TAG, "Local speech started");
                 if (currentState == ConversationState.READY) {
                     setState(ConversationState.LISTENING);
+                    // Show listening gesture
+                    if (sanbotMotionManager != null && sanbotMotionManager.isAvailable()) {
+                        sanbotMotionManager.showListening();
+                    }
                 }
             }
             
@@ -106,6 +128,10 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
                 Logger.d(TAG, "Local speech ended");
                 if (currentState == ConversationState.LISTENING) {
                     setState(ConversationState.PROCESSING);
+                    // Show thinking gesture while processing
+                    if (sanbotMotionManager != null && sanbotMotionManager.isAvailable()) {
+                        sanbotMotionManager.showThinking();
+                    }
                 }
             }
             
@@ -165,11 +191,42 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
             functionExecutor.shutdown();
         }
         
+        if (sanbotMotionManager != null) {
+            sanbotMotionManager.release();
+        }
+        
         super.onDestroy();
     }
     
+    // ============================================
+    // PUBLIC METHODS
+    // ============================================
+    
     public void setListener(VoiceAgentListener listener) {
         this.listener = listener;
+    }
+    
+    /**
+     * Set custom AI instructions
+     */
+    public void setAiInstructions(String instructions) {
+        this.aiInstructions = instructions;
+    }
+    
+    /**
+     * Initialize Sanbot SDK managers for robot motion control.
+     * Call this from Activity after obtaining SDK managers.
+     */
+    public void initializeSanbotSdk(Object headManager, Object wingManager, 
+                                    Object wheelManager, Object sysManager) {
+        if (sanbotMotionManager != null) {
+            sanbotMotionManager.initialize(headManager, wingManager, wheelManager, sysManager);
+            Logger.i(TAG, "Sanbot SDK initialized for motion control");
+        }
+    }
+    
+    public SanbotMotionManager getSanbotMotionManager() {
+        return sanbotMotionManager;
     }
     
     public void startConversation() {
@@ -186,6 +243,7 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
         aiTranscript = new StringBuilder();
         conversationStartTime = System.currentTimeMillis();
         messageCount = 0;
+        sessionConfigured = false;
         
         analytics.startSession();
         webRTCManager.connect();
@@ -197,6 +255,11 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
         }
         
         Logger.i(TAG, "Stopping conversation...");
+        
+        // Say goodbye gesture
+        if (sanbotMotionManager != null && sanbotMotionManager.isAvailable()) {
+            sanbotMotionManager.sayGoodbye();
+        }
         
         ConversationAnalytics.SessionSummary summary = analytics.endSession();
         if (summary != null) {
@@ -212,7 +275,11 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
         // Reset audio to original settings
         if (audioBooster != null) {
             audioBooster.resetAudio();
-            Logger.d(TAG, "Audio reset after conversation");
+        }
+        
+        // Reset robot to neutral
+        if (sanbotMotionManager != null && sanbotMotionManager.isAvailable()) {
+            mainHandler.postDelayed(() -> sanbotMotionManager.resetAll(), 1500);
         }
         
         logDisconnect("user_initiated");
@@ -244,18 +311,12 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
         return audioBooster;
     }
     
-    /**
-     * Set audio boost level (0-100)
-     */
     public void setAudioBoostLevel(int percent) {
         if (audioBooster != null) {
             audioBooster.setBoostLevel(percent);
         }
     }
     
-    /**
-     * Get current audio boost level
-     */
     public int getAudioBoostLevel() {
         if (audioBooster != null) {
             return audioBooster.getBoostLevel();
@@ -287,7 +348,7 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
     @Override
     public void onConnected() {
         Logger.i(TAG, "WebRTC connected");
-        setState(ConversationState.READY);
+        setState(ConversationState.CONFIGURING);
         
         // Configure audio for maximum volume
         if (audioBooster != null) {
@@ -297,6 +358,36 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
         
         if (audioProcessor != null) {
             audioProcessor.initialize(0);
+        }
+        
+        // Send session configuration with robot motion tools
+        configureSession();
+    }
+    
+    /**
+     * Configure the OpenAI session with tools and instructions
+     */
+    private void configureSession() {
+        if (sessionConfigured) {
+            Logger.d(TAG, "Session already configured");
+            return;
+        }
+        
+        Logger.d(TAG, "Configuring session with robot motion support...");
+        
+        // Create session update with robot-aware instructions
+        String sessionUpdate = ClientEvents.sessionUpdateWithRobotMotion(aiInstructions);
+        
+        webRTCManager.sendEvent(sessionUpdate);
+        sessionConfigured = true;
+        
+        Logger.i(TAG, "Session configured with robot motion tools");
+        
+        // Perform greeting gesture
+        if (sanbotMotionManager != null && sanbotMotionManager.isAvailable()) {
+            mainHandler.postDelayed(() -> {
+                sanbotMotionManager.greet();
+            }, 500);
         }
     }
     
@@ -345,7 +436,8 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
         if (event.isSessionCreated()) {
             handleSessionCreated(event);
         } else if (event.isSessionUpdated()) {
-            Logger.d(TAG, "Session updated");
+            Logger.d(TAG, "Session updated successfully");
+            setState(ConversationState.READY);
         } else if (event.isSpeechStarted()) {
             setState(ConversationState.LISTENING);
         } else if (event.isSpeechStopped()) {
@@ -392,7 +484,7 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
     }
     
     // ============================================
-    // Private helper methods
+    // Event Handlers
     // ============================================
     
     private void setState(ConversationState newState) {
@@ -415,7 +507,9 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
                 Logger.e(e, "Failed to parse session ID");
             }
         }
-        setState(ConversationState.READY);
+        
+        // Configure session after creation
+        configureSession();
     }
     
     private void handleTranscriptDelta(ServerEvents.ParsedEvent event) {
@@ -456,7 +550,8 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
             handleFunctionCallFromResponse(event);
         }
         
-        if (currentState == ConversationState.SPEAKING) {
+        if (currentState == ConversationState.SPEAKING || 
+            currentState == ConversationState.EXECUTING_FUNCTION) {
             setState(ConversationState.READY);
         }
     }
@@ -467,7 +562,12 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
         
         Logger.i(TAG, "Function call: %s (id: %s)", funcInfo.name, funcInfo.callId);
         
-        setState(ConversationState.EXECUTING_FUNCTION);
+        // Don't change to EXECUTING_FUNCTION state for quick robot motion calls
+        boolean isRobotMotion = funcInfo.name.startsWith("robot_");
+        
+        if (!isRobotMotion) {
+            setState(ConversationState.EXECUTING_FUNCTION);
+        }
         
         functionExecutor.executeFunctionCall(
             funcInfo.callId,
@@ -479,14 +579,21 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
                 public void onFunctionResult(String callId, String result) {
                     Logger.d(TAG, "Function %s succeeded", funcInfo.name);
                     webRTCManager.sendFunctionResult(callId, result);
-                    setState(ConversationState.READY);
+                    
+                    // Only update state for non-robot functions
+                    if (!isRobotMotion && currentState == ConversationState.EXECUTING_FUNCTION) {
+                        setState(ConversationState.READY);
+                    }
                 }
                 
                 @Override
                 public void onFunctionError(String callId, String error) {
                     Logger.e(TAG, "Function %s failed: %s", funcInfo.name, error);
                     webRTCManager.sendFunctionResult(callId, "{\"error\": \"" + error + "\"}");
-                    setState(ConversationState.READY);
+                    
+                    if (!isRobotMotion && currentState == ConversationState.EXECUTING_FUNCTION) {
+                        setState(ConversationState.READY);
+                    }
                 }
             }
         );
@@ -498,13 +605,11 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
                 @Override
                 public void onFunctionResult(String callId, String result) {
                     webRTCManager.sendFunctionResult(callId, result);
-                    setState(ConversationState.READY);
                 }
                 
                 @Override
                 public void onFunctionError(String callId, String error) {
                     webRTCManager.sendFunctionResult(callId, "{\"error\": \"" + error + "\"}");
-                    setState(ConversationState.READY);
                 }
             }
         );
@@ -532,6 +637,10 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
         Logger.d(TAG, "Logging disconnect - Session: %s, Duration: %dms, Messages: %d, Reason: %s",
             currentSessionId, duration, messageCount, reason);
     }
+    
+    // ============================================
+    // Notification
+    // ============================================
     
     private void createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
