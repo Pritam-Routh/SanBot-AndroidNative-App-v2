@@ -20,5 +20,5 @@ public final class BuildConfig {
   // Field from default config.
   public static final String TRIPANDEVENT_API_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0eXBlIjoidm9pY2Vib3QiLCJuYW1lIjoiUmVhbHRpbWVfdm9pY2VfQXBpX1Rlc3QiLCJpYXQiOjE3NjU1ODcyNjcsImV4cCI6MTc5NzEyMzI2N30.wifip7QzWqtqnlCQQSiuS0DuBplI_dM_dPYqS4nwSlk";
   // Field from default config.
-  public static final String TRIPANDEVENT_BASE_URL = "https://blmlw479-3051.inc1.devtunnels.ms/";
+  public static final String TRIPANDEVENT_BASE_URL = "https://p88hmxbz-3051.inc1.devtunnels.ms/";
 }

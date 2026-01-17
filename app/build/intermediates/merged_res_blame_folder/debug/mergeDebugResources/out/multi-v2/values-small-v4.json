@@ -4,7 +4,7 @@
             "outputFile": "com.tripandevent.sanbotvoice.app-mergeDebugResources-37:/values-small-v4/values-small-v4.xml",
             "map": [
                 {
-                    "source": "C:\\Users\\prita\\.gradle\\caches\\9.0-milestone-1\\transforms\\d04bac929587a6df4ec1277c55e1827e\\transformed\\material-1.11.0\\res\\values-small-v4\\values-small-v4.xml",
+                    "source": "/home/pritam-routh-ubontu/.gradle/caches/9.0-milestone-1/transforms/d04bac929587a6df4ec1277c55e1827e/transformed/material-1.11.0/res/values-small-v4/values-small-v4.xml",
                     "from": {
                         "startLines": "2,3,4,5",
                         "startColumns": "4,4,4,4",

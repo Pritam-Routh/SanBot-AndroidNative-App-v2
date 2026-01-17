@@ -25,6 +25,9 @@ public final class Constants {
     // Voice Agent Source Tracking
     public static final String LEAD_SOURCE = "Voice Agent";
     public static final String LEAD_SOURCE_TYPE = "voice_agent";
+
+    public static final String CRM_EMAIL = "voiceagent@tripandevent.com";  // Replace
+    public static final String CRM_PASSWORD = "VoiceAgent@2026";           // Replace
     /**
      * Backend base URL (configured in gradle.properties)
      * Test backend: https://openai-realtime-backend-v1.onrender.com

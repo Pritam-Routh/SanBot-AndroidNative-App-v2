@@ -193,7 +193,7 @@ public class ClientEvents {
      */
     public static String sessionUpdateWithRobotMotion(String baseInstructions) {
         String robotInstructions = buildRobotAwareInstructions(baseInstructions);
-        JsonArray tools = getRobotMotionTools();
+        JsonArray tools = getAllTools();
         return sessionUpdateWithTools(robotInstructions, tools);
     }
     
@@ -212,43 +212,47 @@ public class ClientEvents {
         sb.append("- Use robot_look to show attention: 'left', 'right', 'up', 'center'\n");
         sb.append("- Call gestures naturally as you speak, not after\n");
         sb.append("- Match gestures to conversation tone\n");
+        sb.append("\n## CRM Integration\n");
+        sb.append("- When customer provides contact info (name, phone, email), use save_customer_lead to save to CRM\n");
+        sb.append("- When customer asks about packages/tours, use get_packages to fetch available options\n");
+        sb.append("- Collect travel details progressively: destination, dates, travelers, hotel preference, budget\n");
         return sb.toString();
     }
     
     /**
-     * Get robot motion tool definitions
+     * Get all tool definitions including CRM and robot tools
      */
-    private static JsonArray getRobotMotionTools() {
+    private static JsonArray getAllTools() {
         JsonArray tools = new JsonArray();
         
-        // 1. robot_gesture
+        // Robot gesture tools
         tools.add(createTool("robot_gesture", 
             "Execute a robot gesture for natural body language",
             createGestureParams()));
         
-        // 2. robot_emotion
         tools.add(createTool("robot_emotion",
             "Show emotion on robot's face display",
             createEmotionParams()));
         
-        // 3. robot_look
         tools.add(createTool("robot_look",
             "Move robot's head to look in a direction",
             createLookParams()));
         
-        // 4. save_customer_lead
+        // CRM tools with updated schema
         tools.add(createTool("save_customer_lead",
-            "Save customer contact information and travel requirements",
+            "Save customer contact information and travel requirements to CRM. Call this when customer provides their name, phone, or email.",
             createLeadParams()));
         
-        // 5. get_packages
         tools.add(createTool("get_packages",
-            "Search and get travel packages based on filters",
+            "Search and get travel packages from the catalog based on destination, budget, or duration",
             createPackageFilterParams()));
         
-        // 6. disconnect_call
+        tools.add(createTool("get_package_details",
+            "Get detailed information about a specific package by its ID",
+            createPackageDetailParams()));
+        
         tools.add(createTool("disconnect_call",
-            "End the conversation when customer is done",
+            "End the conversation when customer is done or wants to leave",
             createEmptyParams()));
         
         return tools;
@@ -333,27 +337,98 @@ public class ClientEvents {
         return params;
     }
     
+    /**
+     * Create lead parameters matching CRM API schema
+     * POST /api/leads
+     */
     private static JsonObject createLeadParams() {
         JsonObject params = new JsonObject();
         params.addProperty("type", "object");
         JsonObject props = new JsonObject();
         
-        addStringProp(props, "name", "Customer's full name");
-        addStringProp(props, "email", "Customer's email");
-        addStringProp(props, "mobile", "Customer's phone number");
-        addStringProp(props, "destination", "Travel destination");
-        addStringProp(props, "travel_date", "Travel date (YYYY-MM-DD)");
-        addIntProp(props, "adults", "Number of adults");
+        // Contact Information
+        addStringProp(props, "name", "Customer's full name (required)");
+        addStringProp(props, "email", "Customer's email address");
+        addStringProp(props, "mobile", "Customer's mobile/phone number with country code");
+        
+        // Location
+        addStringProp(props, "destination", "Desired travel destination");
+        addStringProp(props, "nearestAirport", "Nearest airport code (e.g., DEL, BOM, BLR)");
+        addStringProp(props, "arrivalCity", "City of arrival");
+        addStringProp(props, "departureCity", "City of departure");
+        
+        // Dates
+        addStringProp(props, "travelDate", "Preferred travel date (YYYY-MM-DD format)");
+        addStringProp(props, "journeyStartDate", "Journey start date (YYYY-MM-DD format)");
+        addStringProp(props, "journeyEndDate", "Journey end date (YYYY-MM-DD format)");
+        
+        // Duration
+        addIntProp(props, "durationNights", "Number of nights");
+        addIntProp(props, "durationDays", "Number of days");
+        
+        // Travelers
+        addIntProp(props, "adults", "Number of adult travelers");
         addIntProp(props, "children", "Number of children");
-        addIntProp(props, "nights", "Number of nights");
-        addStringProp(props, "hotel_type", "Hotel category: budget, standard, luxury");
-        addNumberProp(props, "budget", "Budget in INR");
-        addStringProp(props, "special_requirements", "Special requirements");
+        addIntProp(props, "infants", "Number of infants");
+        
+        // Accommodation
+        JsonObject hotelType = new JsonObject();
+        hotelType.addProperty("type", "string");
+        hotelType.addProperty("description", "Preferred hotel category");
+        JsonArray hotelEnum = new JsonArray();
+        hotelEnum.add("2 Star");
+        hotelEnum.add("3 Star");
+        hotelEnum.add("4 Star");
+        hotelEnum.add("5 Star");
+        hotelEnum.add("Resort");
+        hotelEnum.add("Villa");
+        hotelEnum.add("Homestay");
+        hotelType.add("enum", hotelEnum);
+        props.add("hotelType", hotelType);
+        
+        addIntProp(props, "totalRooms", "Number of rooms required");
+        addIntProp(props, "extraMattress", "Number of extra mattresses needed");
+        
+        JsonObject mealPlan = new JsonObject();
+        mealPlan.addProperty("type", "string");
+        mealPlan.addProperty("description", "Meal plan preference");
+        JsonArray mealEnum = new JsonArray();
+        mealEnum.add("EP");   // European Plan - Room only
+        mealEnum.add("CP");   // Continental Plan - Breakfast
+        mealEnum.add("MAP");  // Modified American Plan - Breakfast + Dinner
+        mealEnum.add("AP");   // American Plan - All meals
+        mealPlan.add("enum", mealEnum);
+        props.add("mealPlan", mealPlan);
+        
+        // Extras
+        addBooleanProp(props, "videographyPhotography", "Whether customer wants videography/photography");
+        addStringProp(props, "specialRequirement", "Special requirements or preferences");
+        
+        // Journey
+        JsonObject journeyType = new JsonObject();
+        journeyType.addProperty("type", "string");
+        journeyType.addProperty("description", "Type of journey/trip");
+        JsonArray journeyEnum = new JsonArray();
+        journeyEnum.add("honeymoon");
+        journeyEnum.add("family");
+        journeyEnum.add("corporate");
+        journeyEnum.add("adventure");
+        journeyEnum.add("pilgrimage");
+        journeyEnum.add("leisure");
+        journeyEnum.add("anniversary");
+        journeyType.add("enum", journeyEnum);
+        props.add("journeyType", journeyType);
+        
+        // Budget
+        addNumberProp(props, "budget", "Customer's budget in INR");
         
         params.add("properties", props);
+        
+        // Required fields
         JsonArray required = new JsonArray();
         required.add("name");
         params.add("required", required);
+        
         return params;
     }
     
@@ -362,14 +437,42 @@ public class ClientEvents {
         params.addProperty("type", "object");
         JsonObject props = new JsonObject();
         
-        addStringProp(props, "destination", "Destination to filter");
-        addNumberProp(props, "budget_min", "Minimum budget");
-        addNumberProp(props, "budget_max", "Maximum budget");
+        addStringProp(props, "destination", "Destination to filter packages");
+        addNumberProp(props, "budget_min", "Minimum budget in INR");
+        addNumberProp(props, "budget_max", "Maximum budget in INR");
         addIntProp(props, "nights", "Preferred number of nights");
-        addIntProp(props, "limit", "Max packages to return");
+        addIntProp(props, "min_nights", "Minimum nights");
+        addIntProp(props, "max_nights", "Maximum nights");
+        
+        JsonObject packageType = new JsonObject();
+        packageType.addProperty("type", "string");
+        packageType.addProperty("description", "Package type: with or without flight");
+        JsonArray typeEnum = new JsonArray();
+        typeEnum.add("with_flight");
+        typeEnum.add("without_flight");
+        packageType.add("enum", typeEnum);
+        props.add("package_type", packageType);
+        
+        addIntProp(props, "limit", "Maximum number of packages to return (default 5)");
         
         params.add("properties", props);
         params.add("required", new JsonArray());
+        
+        return params;
+    }
+    
+    private static JsonObject createPackageDetailParams() {
+        JsonObject params = new JsonObject();
+        params.addProperty("type", "object");
+        JsonObject props = new JsonObject();
+        
+        addIntProp(props, "package_id", "The ID of the package to get details for");
+        
+        params.add("properties", props);
+        JsonArray required = new JsonArray();
+        required.add("package_id");
+        params.add("required", required);
+        
         return params;
     }
     
@@ -398,6 +501,13 @@ public class ClientEvents {
     private static void addNumberProp(JsonObject props, String name, String desc) {
         JsonObject prop = new JsonObject();
         prop.addProperty("type", "number");
+        prop.addProperty("description", desc);
+        props.add(name, prop);
+    }
+    
+    private static void addBooleanProp(JsonObject props, String name, String desc) {
+        JsonObject prop = new JsonObject();
+        prop.addProperty("type", "boolean");
         prop.addProperty("description", desc);
         props.add(name, prop);
     }
