@@ -28,6 +28,10 @@
         "source": "com.tripandevent.sanbotvoice.app-main-41:/layout/activity_main.xml"
     },
     {
+        "merged": "com.tripandevent.sanbotvoice.app-debug-39:/drawable_ic_back_arrow.xml.flat",
+        "source": "com.tripandevent.sanbotvoice.app-main-41:/drawable/ic_back_arrow.xml"
+    },
+    {
         "merged": "com.tripandevent.sanbotvoice.app-debug-39:/mipmap-mdpi_ic_launcher.webp.flat",
         "source": "com.tripandevent.sanbotvoice.app-main-41:/mipmap-mdpi/ic_launcher.webp"
     },
@@ -46,6 +50,10 @@
     {
         "merged": "com.tripandevent.sanbotvoice.app-debug-39:/drawable_ic_launcher_foreground.xml.flat",
         "source": "com.tripandevent.sanbotvoice.app-main-41:/drawable/ic_launcher_foreground.xml"
+    },
+    {
+        "merged": "com.tripandevent.sanbotvoice.app-debug-39:/drawable_ic_sparkle.xml.flat",
+        "source": "com.tripandevent.sanbotvoice.app-main-41:/drawable/ic_sparkle.xml"
     },
     {
         "merged": "com.tripandevent.sanbotvoice.app-debug-39:/mipmap-xxxhdpi_ic_launcher_round.webp.flat",

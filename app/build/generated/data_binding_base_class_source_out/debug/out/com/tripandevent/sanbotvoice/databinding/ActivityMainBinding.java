@@ -4,10 +4,8 @@ package com.tripandevent.sanbotvoice.databinding;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.Button;
-import android.widget.LinearLayout;
-import android.widget.ScrollView;
-import android.widget.SeekBar;
+import android.widget.ImageButton;
+import android.widget.ImageView;
 import android.widget.TextView;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -15,8 +13,7 @@ import androidx.constraintlayout.widget.ConstraintLayout;
 import androidx.viewbinding.ViewBinding;
 import androidx.viewbinding.ViewBindings;
 import com.tripandevent.sanbotvoice.R;
-import com.tripandevent.sanbotvoice.ui.views.AudioWaveformView;
-import com.tripandevent.sanbotvoice.ui.views.VoiceAnimationView;
+import com.tripandevent.sanbotvoice.ui.views.VoiceOrbView;
 import java.lang.NullPointerException;
 import java.lang.Override;
 import java.lang.String;
@@ -26,13 +23,16 @@ public final class ActivityMainBinding implements ViewBinding {
   private final ConstraintLayout rootView;
 
   @NonNull
-  public final LinearLayout buttonContainer;
+  public final ImageButton backButton;
+
+  @NonNull
+  public final TextView questionText;
+
+  @NonNull
+  public final ImageView sparkleIcon;
 
   @NonNull
   public final TextView speakerText;
-
-  @NonNull
-  public final Button startButton;
 
   @NonNull
   public final TextView statsText;
@@ -41,46 +41,24 @@ public final class ActivityMainBinding implements ViewBinding {
   public final TextView statusText;
 
   @NonNull
-  public final Button stopButton;
+  public final TextView subtitleText;
 
   @NonNull
-  public final ScrollView transcriptScroll;
+  public final VoiceOrbView voiceOrb;
 
-  @NonNull
-  public final TextView transcriptText;
-
-  @NonNull
-  public final VoiceAnimationView voiceAnimation;
-
-  @NonNull
-  public final SeekBar volumeBoostSeekBar;
-
-  @NonNull
-  public final TextView volumeText;
-
-  @NonNull
-  public final AudioWaveformView waveformView;
-
-  private ActivityMainBinding(@NonNull ConstraintLayout rootView,
-      @NonNull LinearLayout buttonContainer, @NonNull TextView speakerText,
-      @NonNull Button startButton, @NonNull TextView statsText, @NonNull TextView statusText,
-      @NonNull Button stopButton, @NonNull ScrollView transcriptScroll,
-      @NonNull TextView transcriptText, @NonNull VoiceAnimationView voiceAnimation,
-      @NonNull SeekBar volumeBoostSeekBar, @NonNull TextView volumeText,
-      @NonNull AudioWaveformView waveformView) {
+  private ActivityMainBinding(@NonNull ConstraintLayout rootView, @NonNull ImageButton backButton,
+      @NonNull TextView questionText, @NonNull ImageView sparkleIcon, @NonNull TextView speakerText,
+      @NonNull TextView statsText, @NonNull TextView statusText, @NonNull TextView subtitleText,
+      @NonNull VoiceOrbView voiceOrb) {
     this.rootView = rootView;
-    this.buttonContainer = buttonContainer;
+    this.backButton = backButton;
+    this.questionText = questionText;
+    this.sparkleIcon = sparkleIcon;
     this.speakerText = speakerText;
-    this.startButton = startButton;
     this.statsText = statsText;
     this.statusText = statusText;
-    this.stopButton = stopButton;
-    this.transcriptScroll = transcriptScroll;
-    this.transcriptText = transcriptText;
-    this.voiceAnimation = voiceAnimation;
-    this.volumeBoostSeekBar = volumeBoostSeekBar;
-    this.volumeText = volumeText;
-    this.waveformView = waveformView;
+    this.subtitleText = subtitleText;
+    this.voiceOrb = voiceOrb;
   }
 
   @Override
@@ -110,21 +88,27 @@ public final class ActivityMainBinding implements ViewBinding {
     // This is done to optimize the compiled bytecode for size and performance.
     int id;
     missingId: {
-      id = R.id.buttonContainer;
-      LinearLayout buttonContainer = ViewBindings.findChildViewById(rootView, id);
-      if (buttonContainer == null) {
+      id = R.id.backButton;
+      ImageButton backButton = ViewBindings.findChildViewById(rootView, id);
+      if (backButton == null) {
+        break missingId;
+      }
+
+      id = R.id.questionText;
+      TextView questionText = ViewBindings.findChildViewById(rootView, id);
+      if (questionText == null) {
+        break missingId;
+      }
+
+      id = R.id.sparkleIcon;
+      ImageView sparkleIcon = ViewBindings.findChildViewById(rootView, id);
+      if (sparkleIcon == null) {
         break missingId;
       }
 
       id = R.id.speakerText;
       TextView speakerText = ViewBindings.findChildViewById(rootView, id);
       if (speakerText == null) {
-        break missingId;
-      }
-
-      id = R.id.startButton;
-      Button startButton = ViewBindings.findChildViewById(rootView, id);
-      if (startButton == null) {
         break missingId;
       }
 
@@ -140,51 +124,20 @@ public final class ActivityMainBinding implements ViewBinding {
         break missingId;
       }
 
-      id = R.id.stopButton;
-      Button stopButton = ViewBindings.findChildViewById(rootView, id);
-      if (stopButton == null) {
+      id = R.id.subtitleText;
+      TextView subtitleText = ViewBindings.findChildViewById(rootView, id);
+      if (subtitleText == null) {
         break missingId;
       }
 
-      id = R.id.transcriptScroll;
-      ScrollView transcriptScroll = ViewBindings.findChildViewById(rootView, id);
-      if (transcriptScroll == null) {
+      id = R.id.voiceOrb;
+      VoiceOrbView voiceOrb = ViewBindings.findChildViewById(rootView, id);
+      if (voiceOrb == null) {
         break missingId;
       }
 
-      id = R.id.transcriptText;
-      TextView transcriptText = ViewBindings.findChildViewById(rootView, id);
-      if (transcriptText == null) {
-        break missingId;
-      }
-
-      id = R.id.voiceAnimation;
-      VoiceAnimationView voiceAnimation = ViewBindings.findChildViewById(rootView, id);
-      if (voiceAnimation == null) {
-        break missingId;
-      }
-
-      id = R.id.volumeBoostSeekBar;
-      SeekBar volumeBoostSeekBar = ViewBindings.findChildViewById(rootView, id);
-      if (volumeBoostSeekBar == null) {
-        break missingId;
-      }
-
-      id = R.id.volumeText;
-      TextView volumeText = ViewBindings.findChildViewById(rootView, id);
-      if (volumeText == null) {
-        break missingId;
-      }
-
-      id = R.id.waveformView;
-      AudioWaveformView waveformView = ViewBindings.findChildViewById(rootView, id);
-      if (waveformView == null) {
-        break missingId;
-      }
-
-      return new ActivityMainBinding((ConstraintLayout) rootView, buttonContainer, speakerText,
-          startButton, statsText, statusText, stopButton, transcriptScroll, transcriptText,
-          voiceAnimation, volumeBoostSeekBar, volumeText, waveformView);
+      return new ActivityMainBinding((ConstraintLayout) rootView, backButton, questionText,
+          sparkleIcon, speakerText, statsText, statusText, subtitleText, voiceOrb);
     }
     String missingId = rootView.getResources().getResourceName(id);
     throw new NullPointerException("Missing required view with ID: ".concat(missingId));

@@ -9,9 +9,8 @@ import android.content.pm.PackageManager;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.view.View;
-import android.widget.Button;
-import android.widget.ScrollView;
-import android.widget.SeekBar;
+import android.view.WindowManager;
+import android.widget.ImageButton;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -19,39 +18,34 @@ import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsControllerCompat;
 
-import com.tripandevent.sanbotvoice.analytics.ConversationAnalytics;
-import com.tripandevent.sanbotvoice.audio.AudioBooster;
 import com.tripandevent.sanbotvoice.core.ConversationState;
 import com.tripandevent.sanbotvoice.core.VoiceAgentService;
-import com.tripandevent.sanbotvoice.ui.views.AudioWaveformView;
-import com.tripandevent.sanbotvoice.ui.views.VoiceAnimationView;
+import com.tripandevent.sanbotvoice.ui.views.VoiceOrbView;
 import com.tripandevent.sanbotvoice.utils.Logger;
 
 public class MainActivity extends AppCompatActivity implements VoiceAgentService.VoiceAgentListener {
-    
+
     private static final String TAG = "MainActivity";
     private static final int PERMISSION_REQUEST_CODE = 100;
-    
+
     // UI components
-    private Button startButton;
-    private Button stopButton;
+    private ImageButton backButton;
     private TextView statusText;
-    private TextView transcriptText;
+    private TextView questionText;
+    private TextView subtitleText;
     private TextView speakerText;
     private TextView statsText;
-    private TextView volumeText;
-    private ScrollView transcriptScroll;
-    private VoiceAnimationView voiceAnimation;
-    private AudioWaveformView waveformView;
-    private SeekBar volumeBoostSeekBar;
-    
+    private VoiceOrbView voiceOrb;
+
     // Service connection
     private VoiceAgentService voiceService;
     private boolean isServiceBound = false;
-    
-    // Transcript
-    private StringBuilder transcriptBuilder = new StringBuilder();
+
+    // Conversation state
+    private boolean isConversationActive = false;
     
     private final ServiceConnection serviceConnection = new ServiceConnection() {
         @Override
@@ -62,13 +56,8 @@ public class MainActivity extends AppCompatActivity implements VoiceAgentService
             isServiceBound = true;
             Logger.d(TAG, "Service connected");
             updateUIForState(voiceService.getCurrentState());
-            
-            // Update volume boost seekbar if exists
-            if (volumeBoostSeekBar != null) {
-                volumeBoostSeekBar.setProgress(voiceService.getAudioBoostLevel());
-            }
         }
-        
+
         @Override
         public void onServiceDisconnected(ComponentName name) {
             voiceService = null;
@@ -80,13 +69,24 @@ public class MainActivity extends AppCompatActivity implements VoiceAgentService
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
+        // Make status bar transparent and set light icons for dark background
+        getWindow().setFlags(
+            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+        );
+        WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
+        WindowInsetsControllerCompat controller = WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView());
+        controller.setAppearanceLightStatusBars(false);
+        controller.setAppearanceLightNavigationBars(false);
+
         setContentView(R.layout.activity_main);
-        
+
         Logger.i(TAG, "MainActivity created");
-        
+
         initializeViews();
         setupClickListeners();
-        
+
         if (checkPermissions()) {
             startVoiceService();
         } else {
@@ -95,74 +95,44 @@ public class MainActivity extends AppCompatActivity implements VoiceAgentService
     }
     
     private void initializeViews() {
-        startButton = findViewById(R.id.startButton);
-        stopButton = findViewById(R.id.stopButton);
+        backButton = findViewById(R.id.backButton);
         statusText = findViewById(R.id.statusText);
-        transcriptText = findViewById(R.id.transcriptText);
-        transcriptScroll = findViewById(R.id.transcriptScroll);
-        voiceAnimation = findViewById(R.id.voiceAnimation);
-        waveformView = findViewById(R.id.waveformView);
+        questionText = findViewById(R.id.questionText);
+        subtitleText = findViewById(R.id.subtitleText);
         speakerText = findViewById(R.id.speakerText);
         statsText = findViewById(R.id.statsText);
-        volumeText = findViewById(R.id.volumeText);
-        volumeBoostSeekBar = findViewById(R.id.volumeBoostSeekBar);
-        
-        stopButton.setEnabled(false);
-        statusText.setText("Initializing...");
-        
+        voiceOrb = findViewById(R.id.voiceOrb);
+
+        statusText.setText("Ready");
+        questionText.setText("Tap the microphone to start a conversation");
+
         if (speakerText != null) {
             speakerText.setVisibility(View.GONE);
         }
-        
+
         if (statsText != null) {
             statsText.setVisibility(View.GONE);
-        }
-        
-        // Setup volume boost seekbar
-        if (volumeBoostSeekBar != null) {
-            volumeBoostSeekBar.setMax(100);
-            volumeBoostSeekBar.setProgress(33); // Default 33% boost
-            
-            volumeBoostSeekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-                @Override
-                public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
-                    if (fromUser && isServiceBound && voiceService != null) {
-                        voiceService.setAudioBoostLevel(progress);
-                        updateVolumeText(progress);
-                    }
-                }
-                
-                @Override
-                public void onStartTrackingTouch(SeekBar seekBar) {}
-                
-                @Override
-                public void onStopTrackingTouch(SeekBar seekBar) {}
-            });
-        }
-        
-        updateVolumeText(33);
-    }
-    
-    private void updateVolumeText(int percent) {
-        if (volumeText != null) {
-            volumeText.setText(String.format("Volume Boost: %d%%", percent));
         }
     }
     
     private void setupClickListeners() {
-        startButton.setOnClickListener(v -> {
+        // Voice orb click toggles conversation
+        voiceOrb.setOnOrbClickListener(() -> {
             if (isServiceBound && voiceService != null) {
-                transcriptBuilder = new StringBuilder();
-                transcriptText.setText("");
-                voiceService.startConversation();
+                if (isConversationActive) {
+                    voiceService.stopConversation();
+                } else {
+                    voiceService.startConversation();
+                }
             }
         });
-        
-        stopButton.setOnClickListener(v -> {
-            if (isServiceBound && voiceService != null) {
+
+        // Back button
+        backButton.setOnClickListener(v -> {
+            if (isConversationActive && isServiceBound && voiceService != null) {
                 voiceService.stopConversation();
-                showSessionStats();
             }
+            finish();
         });
     }
     
@@ -192,7 +162,7 @@ public class MainActivity extends AppCompatActivity implements VoiceAgentService
                 Logger.w(TAG, "Permissions denied");
                 Toast.makeText(this, "Microphone permission is required", Toast.LENGTH_LONG).show();
                 statusText.setText("Permission denied");
-                startButton.setEnabled(false);
+                questionText.setText("Microphone permission is required to use voice features");
             }
         }
     }
@@ -231,10 +201,10 @@ public class MainActivity extends AppCompatActivity implements VoiceAgentService
     @Override
     public void onTranscript(String text, boolean isUser) {
         runOnUiThread(() -> {
-            String prefix = isUser ? "You: " : "AI: ";
-            transcriptBuilder.append(prefix).append(text).append("\n\n");
-            transcriptText.setText(transcriptBuilder.toString());
-            transcriptScroll.post(() -> transcriptScroll.fullScroll(ScrollView.FOCUS_DOWN));
+            // Update the question text with the last transcript
+            if (isUser) {
+                questionText.setText(text);
+            }
         });
     }
     
@@ -250,8 +220,8 @@ public class MainActivity extends AppCompatActivity implements VoiceAgentService
     @Override
     public void onAudioLevel(float level) {
         runOnUiThread(() -> {
-            if (waveformView != null) {
-                waveformView.setAudioLevel(level);
+            if (voiceOrb != null) {
+                voiceOrb.setAudioLevel(level);
             }
         });
     }
@@ -273,139 +243,84 @@ public class MainActivity extends AppCompatActivity implements VoiceAgentService
     private void updateUIForState(ConversationState state) {
         switch (state) {
             case IDLE:
-                statusText.setText("Ready to start");
-                startButton.setEnabled(true);
-                stopButton.setEnabled(false);
-                if (voiceAnimation != null) {
-                    voiceAnimation.setListening(false);
-                    voiceAnimation.setSpeaking(false);
-                }
-                if (waveformView != null) {
-                    waveformView.setIdle();
+                statusText.setText("Ready");
+                questionText.setText("Tap the microphone to start a conversation");
+                isConversationActive = false;
+                if (voiceOrb != null) {
+                    voiceOrb.setListening(false);
+                    voiceOrb.setSpeaking(false);
+                    voiceOrb.setActive(false);
                 }
                 break;
-                
+
             case CONNECTING:
             case CONFIGURING:
                 statusText.setText("Connecting...");
-                startButton.setEnabled(false);
-                stopButton.setEnabled(true);
-                if (voiceAnimation != null) {
-                    voiceAnimation.setListening(false);
-                    voiceAnimation.setSpeaking(false);
-                }
-                if (waveformView != null) {
-                    waveformView.setIdle();
+                isConversationActive = true;
+                if (voiceOrb != null) {
+                    voiceOrb.setActive(true);
+                    voiceOrb.setListening(false);
+                    voiceOrb.setSpeaking(false);
                 }
                 break;
-                
+
             case READY:
-                statusText.setText("Ready - Speak now");
-                startButton.setEnabled(false);
-                stopButton.setEnabled(true);
-                if (voiceAnimation != null) {
-                    voiceAnimation.setListening(true);
-                    voiceAnimation.setSpeaking(false);
-                }
-                if (waveformView != null) {
-                    waveformView.setListening(true);
+                statusText.setText("Speak now");
+                isConversationActive = true;
+                if (voiceOrb != null) {
+                    voiceOrb.setListening(true);
+                    voiceOrb.setSpeaking(false);
                 }
                 break;
-                
+
             case LISTENING:
                 statusText.setText("Listening...");
-                startButton.setEnabled(false);
-                stopButton.setEnabled(true);
-                if (voiceAnimation != null) {
-                    voiceAnimation.setListening(true);
-                    voiceAnimation.setSpeaking(false);
-                }
-                if (waveformView != null) {
-                    waveformView.setListening(true);
+                isConversationActive = true;
+                if (voiceOrb != null) {
+                    voiceOrb.setListening(true);
+                    voiceOrb.setSpeaking(false);
                 }
                 break;
-                
+
             case PROCESSING:
             case EXECUTING_FUNCTION:
                 statusText.setText("Processing...");
-                startButton.setEnabled(false);
-                stopButton.setEnabled(true);
-                if (voiceAnimation != null) {
-                    voiceAnimation.setListening(false);
-                    voiceAnimation.setSpeaking(false);
-                }
-                if (waveformView != null) {
-                    waveformView.setIdle();
+                isConversationActive = true;
+                if (voiceOrb != null) {
+                    voiceOrb.setListening(false);
+                    voiceOrb.setSpeaking(false);
+                    voiceOrb.setActive(true);
                 }
                 break;
-                
+
             case SPEAKING:
-                statusText.setText("AI Speaking...");
-                startButton.setEnabled(false);
-                stopButton.setEnabled(true);
-                if (voiceAnimation != null) {
-                    voiceAnimation.setListening(false);
-                    voiceAnimation.setSpeaking(true);
-                }
-                if (waveformView != null) {
-                    waveformView.setSpeaking(true);
+                statusText.setText("Speaking...");
+                isConversationActive = true;
+                if (voiceOrb != null) {
+                    voiceOrb.setListening(false);
+                    voiceOrb.setSpeaking(true);
                 }
                 break;
-                
+
             case DISCONNECTING:
-                statusText.setText("Disconnecting...");
-                startButton.setEnabled(false);
-                stopButton.setEnabled(false);
+                statusText.setText("Ending...");
+                isConversationActive = false;
+                if (voiceOrb != null) {
+                    voiceOrb.setActive(false);
+                }
                 break;
-                
+
             case ERROR:
-                statusText.setText("Error - Tap Start to retry");
-                startButton.setEnabled(true);
-                stopButton.setEnabled(false);
-                if (voiceAnimation != null) {
-                    voiceAnimation.setListening(false);
-                    voiceAnimation.setSpeaking(false);
-                }
-                if (waveformView != null) {
-                    waveformView.setIdle();
+                statusText.setText("Tap to retry");
+                questionText.setText("Something went wrong. Please try again.");
+                isConversationActive = false;
+                if (voiceOrb != null) {
+                    voiceOrb.setListening(false);
+                    voiceOrb.setSpeaking(false);
+                    voiceOrb.setActive(false);
                 }
                 break;
         }
     }
     
-    private void showSessionStats() {
-        if (voiceService == null || statsText == null) return;
-        
-        ConversationAnalytics analytics = voiceService.getAnalytics();
-        if (analytics == null) return;
-        
-        ConversationAnalytics.AggregateStats stats = analytics.getAggregateStats();
-        
-        // Also show audio info
-        AudioBooster audioBooster = voiceService.getAudioBooster();
-        String audioInfo = audioBooster != null ? audioBooster.getVolumeInfo() : "N/A";
-        
-        String statsStr = String.format(
-            "Sessions: %d | Total Time: %s | Avg Response: %dms\nAudio: %s",
-            stats.totalSessions,
-            formatDuration(stats.totalDurationMs),
-            stats.avgResponseTimeMs,
-            audioInfo
-        );
-        
-        statsText.setVisibility(View.VISIBLE);
-        statsText.setText(statsStr);
-    }
-    
-    private String formatDuration(long ms) {
-        long seconds = ms / 1000;
-        long minutes = seconds / 60;
-        seconds = seconds % 60;
-        
-        if (minutes > 0) {
-            return String.format("%dm %ds", minutes, seconds);
-        } else {
-            return String.format("%ds", seconds);
-        }
-    }
 }

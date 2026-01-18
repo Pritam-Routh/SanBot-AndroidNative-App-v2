@@ -1420,6 +1420,10 @@ color error_color_material_dark
 color error_color_material_light
 color foreground_material_dark
 color foreground_material_light
+color gradient_cyan
+color gradient_orange
+color gradient_pink
+color gradient_purple
 color highlighted_text_material_dark
 color highlighted_text_material_light
 color idle
@@ -2077,6 +2081,11 @@ color mtrl_textinput_focused_box_stroke_color
 color mtrl_textinput_hovered_box_stroke_color
 color notification_action_color_filter
 color notification_icon_bg_color
+color orb_center
+color orb_glow
+color orb_inner
+color orb_outer
+color orb_ring
 color primary
 color primary_dark
 color primary_dark_material_dark
@@ -3002,6 +3011,7 @@ drawable design_ic_visibility_off
 drawable design_password_eye
 drawable design_snackbar_background
 drawable ic_arrow_back_black_24
+drawable ic_back_arrow
 drawable ic_call_answer
 drawable ic_call_answer_low
 drawable ic_call_answer_video
@@ -3022,6 +3032,7 @@ drawable ic_mtrl_chip_checked_black
 drawable ic_mtrl_chip_checked_circle
 drawable ic_mtrl_chip_close_circle
 drawable ic_search_black_24
+drawable ic_sparkle
 drawable m3_avd_hide_password
 drawable m3_avd_show_password
 drawable m3_bottom_sheet_drag_handle
@@ -3184,6 +3195,7 @@ id auto
 id autoComplete
 id autoCompleteToEnd
 id autoCompleteToStart
+id backButton
 id barrier
 id baseline
 id beginOnFirstDraw
@@ -3195,7 +3207,6 @@ id bounce
 id bounceBoth
 id bounceEnd
 id bounceStart
-id buttonContainer
 id buttonPanel
 id cache_measures
 id callMeasure
@@ -3453,6 +3464,7 @@ id postLayout
 id pressed
 id progress_circular
 id progress_horizontal
+id questionText
 id radio
 id ratio
 id rectangles
@@ -3503,6 +3515,7 @@ id snap
 id snapMargins
 id south
 id spacer
+id sparkleIcon
 id speakerText
 id special_effects_controller_view_tag
 id spline
@@ -3516,7 +3529,6 @@ id src_in
 id src_over
 id standard
 id start
-id startButton
 id startHorizontal
 id startToEnd
 id startVertical
@@ -3525,10 +3537,10 @@ id staticPostLayout
 id statsText
 id statusText
 id stop
-id stopButton
 id stretch
 id submenuarrow
 id submit_area
+id subtitleText
 id supportScrollUp
 id tabMode
 id tag_accessibility_actions
@@ -3568,8 +3580,6 @@ id toggle
 id top
 id topPanel
 id touch_outside
-id transcriptScroll
-id transcriptText
 id transitionToEnd
 id transitionToStart
 id transition_current_scene
@@ -3592,10 +3602,7 @@ id view_tree_saved_state_registry_owner
 id view_tree_view_model_store_owner
 id visible
 id visible_removing_fragment_view_tag
-id voiceAnimation
-id volumeBoostSeekBar
-id volumeText
-id waveformView
+id voiceOrb
 id west
 id withText
 id with_icon
