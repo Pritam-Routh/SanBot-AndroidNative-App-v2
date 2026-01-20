@@ -244,7 +244,7 @@ public class MainActivity extends AppCompatActivity implements VoiceAgentService
         switch (state) {
             case IDLE:
                 statusText.setText("Ready");
-                questionText.setText("Tap the microphone to start a conversation");
+                questionText.setText("Hi there, welcome to Trip and Event.");
                 isConversationActive = false;
                 if (voiceOrb != null) {
                     voiceOrb.setListening(false);

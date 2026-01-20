@@ -32,7 +32,8 @@ public class VoiceOrbView extends View {
     private static final int COLOR_INNER_GLOW = 0xFFE040FB;
     private static final int COLOR_OUTER_GLOW = 0xFFAA00FF;
     private static final int COLOR_RING = 0xFF9C27B0;
-    private static final int COLOR_IDLE = 0xFF404040;
+    private static final int COLOR_IDLE = 0xFF808080;  // Lighter gray for better visibility
+    private static final int COLOR_IDLE_RING = 0xFF5A5A5A;  // Subtle ring color for idle state
 
     // Rainbow gradient colors for active state
     private static final int[] RAINBOW_COLORS = {
@@ -256,6 +257,9 @@ public class VoiceOrbView extends View {
         } else {
             // Draw subtle idle glow
             drawIdleGlow(canvas, centerX, centerY, glowRadius * 0.7f);
+
+            // Draw subtle ring around orb for better visibility in idle state
+            drawIdleRing(canvas, centerX, centerY, ringRadius * 0.85f);
         }
 
         // Draw main orb
@@ -328,11 +332,12 @@ public class VoiceOrbView extends View {
     }
 
     private void drawIdleGlow(Canvas canvas, float cx, float cy, float radius) {
+        // Subtle outer glow for depth
         RadialGradient gradient = new RadialGradient(
             cx, cy, radius,
             new int[]{
-                Color.argb(40, 224, 64, 251),
-                Color.argb(20, 170, 0, 255),
+                Color.argb(50, 224, 64, 251),
+                Color.argb(25, 170, 0, 255),
                 Color.argb(0, 0, 0, 0)
             },
             new float[]{0f, 0.5f, 1f},
@@ -341,6 +346,15 @@ public class VoiceOrbView extends View {
         glowPaint.setShader(gradient);
         canvas.drawCircle(cx, cy, radius, glowPaint);
         glowPaint.setShader(null);
+    }
+
+    private void drawIdleRing(Canvas canvas, float cx, float cy, float radius) {
+        // Draw a subtle ring around the orb in idle state for better visibility
+        ringPaint.setShader(null);
+        ringPaint.setColor(COLOR_IDLE_RING);
+        ringPaint.setStrokeWidth(2f);
+        ringPaint.setAlpha(180);
+        canvas.drawCircle(cx, cy, radius, ringPaint);
     }
 
     private void drawOrb(Canvas canvas, float cx, float cy, float radius) {

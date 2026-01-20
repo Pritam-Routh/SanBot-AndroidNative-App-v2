@@ -41,7 +41,7 @@
         android:layout_height="wrap_content"
         android:layout_marginTop="24dp"
         android:layout_marginHorizontal="24dp"
-        android:text="Tap the microphone to start a conversation"
+        android:text="Hi there, welcome to Trip and Event."
         android:textSize="24sp"
         android:textColor="@color/text_primary"
         android:fontFamily="sans-serif-light"
