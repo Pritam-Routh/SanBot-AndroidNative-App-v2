@@ -104,7 +104,7 @@ public class MainActivity extends AppCompatActivity implements VoiceAgentService
         voiceOrb = findViewById(R.id.voiceOrb);
 
         statusText.setText("Ready");
-        questionText.setText("Tap the microphone to start a conversation");
+        questionText.setText("Hi there, Welcome to Trip & Event!");
 
         if (speakerText != null) {
             speakerText.setVisibility(View.GONE);
