@@ -45,16 +45,14 @@ public class CrmApiClient {
     /**
      * Set to false to disable CRM API calls until credentials are available.
      * When false, all API calls will return mock/simulated responses.
-     * 
-     * TODO: Set to true once you have CRM credentials
      */
-    public static final boolean CRM_ENABLED = false;
+    public static final boolean CRM_ENABLED = true;
     
     /**
-     * CRM Credentials - Update these when you receive them
+     * CRM Credentials
      */
-    private static final String CRM_EMAIL = "your_actual_email";
-    private static final String CRM_PASSWORD = "your_actual_password";
+    private static final String CRM_EMAIL = "samim97322@gmail.com";
+    private static final String CRM_PASSWORD = "TNE@1234";
     
     // ============================================
     // SINGLETON & INITIALIZATION

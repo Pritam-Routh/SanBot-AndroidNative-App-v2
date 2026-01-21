@@ -21,6 +21,7 @@ import androidx.core.content.ContextCompat;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
 
+import com.tripandevent.sanbotvoice.config.AgentConfig;
 import com.tripandevent.sanbotvoice.core.ConversationState;
 import com.tripandevent.sanbotvoice.core.VoiceAgentService;
 import com.tripandevent.sanbotvoice.ui.views.VoiceOrbView;
@@ -53,6 +54,10 @@ public class MainActivity extends AppCompatActivity implements VoiceAgentService
             VoiceAgentService.LocalBinder binder = (VoiceAgentService.LocalBinder) service;
             voiceService = binder.getService();
             voiceService.setListener(MainActivity.this);
+
+            // Configure the agent from client side
+            configureAgent();
+
             isServiceBound = true;
             Logger.d(TAG, "Service connected");
             updateUIForState(voiceService.getCurrentState());
@@ -171,6 +176,70 @@ public class MainActivity extends AppCompatActivity implements VoiceAgentService
         Intent serviceIntent = new Intent(this, VoiceAgentService.class);
         startForegroundService(serviceIntent);
         bindService(serviceIntent, serviceConnection, Context.BIND_AUTO_CREATE);
+    }
+
+    /**
+     * Configure the voice agent from the client side.
+     * This is where you customize the agent's personality, instructions, and behavior.
+     *
+     * You can either:
+     * 1. Use AgentConfig.Builder to build configuration from parameters
+     * 2. Set custom system instructions directly
+     *
+     * Call this method after the service is connected but before starting a conversation.
+     */
+    private void configureAgent() {
+        if (voiceService == null) return;
+
+        // ============================================
+        // OPTION 1: Use AgentConfig Builder (Recommended)
+        // ============================================
+        AgentConfig config = new AgentConfig.Builder()
+            // Agent identity
+            .setAgentName("Tara")
+            .setCompanyName("Trip & Event")
+
+            // Personality (CHEERFUL, PROFESSIONAL, FRIENDLY, CALM)
+            .setPersonality(AgentConfig.Personality.CHEERFUL)
+
+            // Voice (alloy, ash, ballad, coral, echo, sage, shimmer, verse, marin, cedar)
+            .setVoice("alloy")
+
+            // Sales behavior flags
+            .setEagerToShowPackages(true)   // Proactively show packages
+            .setCollectLeadsEarly(true)     // Ask for contact info early
+            .setUseUpselling(true)          // Suggest upgrades
+
+            // Temperature (0.0 = focused, 1.0 = creative)
+            .setTemperature(0.8)
+
+            // Optional: Set custom company description
+            .setCompanyDescription(
+                "Trip & Event is India's premier travel booking platform, " +
+                "specializing in customized domestic and international tour packages. " +
+                "We offer honeymoon packages, family vacations, corporate trips, adventure tours, " +
+                "pilgrimage journeys, and weekend getaways. " +
+                "Popular destinations: Goa, Kerala, Rajasthan, Kashmir, Bali, Thailand, Dubai, Singapore, Maldives. " +
+                "Our USP: Personalized itineraries, best price guarantee, 24/7 support, hassle-free booking."
+            )
+
+            .build();
+
+        voiceService.configure(config);
+        Logger.i(TAG, "Agent configured: %s for %s", config.getAgentName(), config.getCompanyName());
+
+        // ============================================
+        // OPTION 2: Set custom instructions directly (Advanced)
+        // ============================================
+        // Uncomment below to use fully custom instructions instead:
+        /*
+        String customInstructions =
+            "You are a helpful AI assistant. " +
+            "Your task is to help customers with their travel inquiries. " +
+            "Be friendly, professional, and always try to help.";
+
+        voiceService.setAiInstructions(customInstructions);
+        */
     }
     
     @Override

@@ -80,30 +80,39 @@ public class ClientEvents {
     
     /**
      * Create session.update event from SessionConfig
+     * Format follows OpenAI Realtime API GA WebRTC specification (/v1/realtime/calls)
      */
     public static String sessionUpdate(SessionConfig config) {
         JsonObject event = new JsonObject();
         event.addProperty("type", "session.update");
         event.addProperty("event_id", generateEventId());
-        
+
         JsonObject session = new JsonObject();
-        
-        // GA API format
+
+        // GA WebRTC format requires session type
         session.addProperty("type", "realtime");
-        
+
         // Instructions
         if (config.instructions != null) {
             session.addProperty("instructions", config.instructions);
         }
-        
-        // Audio input configuration
+
+        // Output modalities for GA format
+        JsonArray outputModalities = new JsonArray();
+        outputModalities.add("audio");
+        outputModalities.add("text");
+        session.add("output_modalities", outputModalities);
+
+        // Audio configuration (GA nested format)
         JsonObject audio = new JsonObject();
+
+        // Input audio configuration
         JsonObject input = new JsonObject();
         JsonObject inputFormat = new JsonObject();
         inputFormat.addProperty("type", "audio/" + config.inputAudioFormat);
-        inputFormat.addProperty("sample_rate", config.sampleRate);
+        inputFormat.addProperty("rate", config.sampleRate);
         input.add("format", inputFormat);
-        
+
         // Turn detection
         JsonObject turnDetection = new JsonObject();
         turnDetection.addProperty("type", "server_vad");
@@ -111,80 +120,115 @@ public class ClientEvents {
         turnDetection.addProperty("prefix_padding_ms", 300);
         turnDetection.addProperty("silence_duration_ms", 500);
         input.add("turn_detection", turnDetection);
-        
+
+        // Input transcription
+        JsonObject transcription = new JsonObject();
+        transcription.addProperty("model", "whisper-1");
+        input.add("transcription", transcription);
+
         audio.add("input", input);
-        
-        // Audio output configuration
+
+        // Output audio configuration
         JsonObject output = new JsonObject();
         JsonObject outputFormat = new JsonObject();
         outputFormat.addProperty("type", "audio/" + config.outputAudioFormat);
-        outputFormat.addProperty("sample_rate", config.sampleRate);
+        outputFormat.addProperty("rate", config.sampleRate);
         output.add("format", outputFormat);
         output.addProperty("voice", config.voice);
         audio.add("output", output);
-        
+
         session.add("audio", audio);
-        
+
         // Tools
         if (config.tools != null && config.tools.size() > 0) {
             session.add("tools", config.tools);
             session.addProperty("tool_choice", config.toolChoice);
         }
-        
+
+        // Temperature
+        session.addProperty("temperature", 0.8);
+
+        // Max response output tokens
+        session.addProperty("max_response_output_tokens", 4096);
+
         event.add("session", session);
-        
+
         return event.toString();
     }
     
     /**
      * Create session.update with tools and robot motion support
+     * Format follows OpenAI Realtime API GA WebRTC specification (/v1/realtime/calls)
      */
     public static String sessionUpdateWithTools(String instructions, JsonArray tools) {
         JsonObject event = new JsonObject();
         event.addProperty("type", "session.update");
         event.addProperty("event_id", generateEventId());
-        
+
         JsonObject session = new JsonObject();
+
+        // GA WebRTC format requires session type
         session.addProperty("type", "realtime");
+
+        // Instructions - the system prompt
         session.addProperty("instructions", instructions);
-        
-        // Audio configuration
+
+        // Output modalities for GA format
+        JsonArray outputModalities = new JsonArray();
+        outputModalities.add("audio");
+        outputModalities.add("text");
+        session.add("output_modalities", outputModalities);
+
+        // Audio configuration (GA nested format)
         JsonObject audio = new JsonObject();
-        
-        // Input
+
+        // Input audio configuration
         JsonObject input = new JsonObject();
         JsonObject inputFormat = new JsonObject();
-        inputFormat.addProperty("type", "audio/pcm16");
-        inputFormat.addProperty("sample_rate", 24000);
+        inputFormat.addProperty("type", "audio/pcm");
+        inputFormat.addProperty("rate", 24000);
         input.add("format", inputFormat);
-        
+
+        // Turn detection
         JsonObject turnDetection = new JsonObject();
         turnDetection.addProperty("type", "server_vad");
         turnDetection.addProperty("threshold", 0.5);
         turnDetection.addProperty("prefix_padding_ms", 300);
         turnDetection.addProperty("silence_duration_ms", 500);
         input.add("turn_detection", turnDetection);
+
+        // Input transcription
+        JsonObject transcription = new JsonObject();
+        transcription.addProperty("model", "whisper-1");
+        input.add("transcription", transcription);
+
         audio.add("input", input);
-        
-        // Output
+
+        // Output audio configuration
         JsonObject output = new JsonObject();
         JsonObject outputFormat = new JsonObject();
-        outputFormat.addProperty("type", "audio/pcm16");
-        outputFormat.addProperty("sample_rate", 24000);
+        outputFormat.addProperty("type", "audio/pcm");
+        outputFormat.addProperty("rate", 24000);
         output.add("format", outputFormat);
         output.addProperty("voice", "alloy");
         audio.add("output", output);
-        
+
         session.add("audio", audio);
-        
+
         // Tools
         if (tools != null && tools.size() > 0) {
             session.add("tools", tools);
             session.addProperty("tool_choice", "auto");
         }
-        
+
+        // Temperature for response generation
+        session.addProperty("temperature", 0.8);
+
+        // Max response output tokens
+        session.addProperty("max_response_output_tokens", 4096);
+
         event.add("session", session);
-        
+
         return event.toString();
     }
     

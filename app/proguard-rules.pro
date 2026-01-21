@@ -3,9 +3,15 @@
 # Keep application class
 -keep class com.tripandevent.sanbotvoice.SanbotVoiceApp { *; }
 
+# Keep ALL API classes - interfaces, clients, and models
+-keep class com.tripandevent.sanbotvoice.api.** { *; }
+-keep interface com.tripandevent.sanbotvoice.api.** { *; }
+-keepclassmembers class com.tripandevent.sanbotvoice.api.** { *; }
+
 # Keep all model classes
 -keep class com.tripandevent.sanbotvoice.api.models.** { *; }
 -keep class com.tripandevent.sanbotvoice.openai.models.** { *; }
+-keep class com.tripandevent.sanbotvoice.openai.events.** { *; }
 
 # Sanbot SDK
 -keep class com.sanbot.opensdk.** { *; }
@@ -16,19 +22,40 @@
 -keep class org.webrtc.** { *; }
 -dontwarn org.webrtc.**
 
-# Retrofit
+# Retrofit - Keep everything needed for runtime
 -keepattributes Signature
 -keepattributes Exceptions
+-keepattributes RuntimeVisibleAnnotations
+-keepattributes RuntimeInvisibleAnnotations
+-keepattributes RuntimeVisibleParameterAnnotations
+-keepattributes RuntimeInvisibleParameterAnnotations
+
+# Keep Retrofit interfaces and their methods
+-keep,allowobfuscation interface * {
+    @retrofit2.http.* <methods>;
+}
 -keepclassmembers,allowshrinking,allowobfuscation interface * {
     @retrofit2.http.* <methods>;
 }
+
+# Keep Retrofit classes
+-keep class retrofit2.** { *; }
+-keepclasseswithmembers class * {
+    @retrofit2.http.* <methods>;
+}
+
 -dontwarn org.codehaus.mojo.animal_sniffer.IgnoreJRERequirement
 -dontwarn javax.annotation.**
 -dontwarn kotlin.Unit
 -dontwarn retrofit2.KotlinExtensions
 -dontwarn retrofit2.KotlinExtensions$*
--if interface * { @retrofit2.http.* <methods>; }
--keep,allowobfuscation interface <1>
+
+# Keep generic signature of Call, Response (R8 full mode strips signatures from non-kept items)
+-keep,allowobfuscation,allowshrinking interface retrofit2.Call
+-keep,allowobfuscation,allowshrinking class retrofit2.Response
+
+# With R8 full mode generic signatures are stripped for classes that are not kept
+-keep,allowobfuscation,allowshrinking class kotlin.coroutines.Continuation
 
 # OkHttp
 -dontwarn okhttp3.**

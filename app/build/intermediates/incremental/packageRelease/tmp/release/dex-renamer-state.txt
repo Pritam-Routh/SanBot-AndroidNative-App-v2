@@ -1,0 +1,4 @@
+#Tue Jan 20 23:45:12 IST 2026
+base.0=/media/pritam-routh-ubontu/New Volume/Personal-Projects/SanBot-AndroidNative-App-v2/app/build/intermediates/dex/release/minifyReleaseWithR8/classes.dex
+path.0=classes.dex
+renamed.0=classes.dex

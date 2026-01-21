@@ -17,6 +17,7 @@ import androidx.core.app.NotificationCompat;
 
 import com.tripandevent.sanbotvoice.MainActivity;
 import com.tripandevent.sanbotvoice.R;
+import com.tripandevent.sanbotvoice.config.AgentConfig;
 import com.tripandevent.sanbotvoice.audio.AudioBooster;
 import com.tripandevent.sanbotvoice.audio.AudioProcessor;
 import com.tripandevent.sanbotvoice.audio.SpeakerIdentifier;
@@ -65,12 +66,12 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
     private StringBuilder currentTranscript = new StringBuilder();
     private StringBuilder userTranscript = new StringBuilder();
     private StringBuilder aiTranscript = new StringBuilder();
-    
-    // AI instructions (can be customized)
-    private String aiInstructions = "You are a helpful, friendly travel assistant for Trip & Event. " +
-        "Help customers plan their perfect vacation. Be warm, enthusiastic, and knowledgeable. " +
-        "Ask about their travel preferences, suggest destinations, and offer to create quotes. " +
-        "Always try to collect customer contact information for follow-up.";
+
+    // Agent configuration (can be customized from client side)
+    private AgentConfig agentConfig = AgentConfig.getDefault();
+
+    // AI instructions (built from agentConfig or set directly)
+    private String aiInstructions = null;
     
     /**
      * Listener interface for UI updates
@@ -207,10 +208,42 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
     }
     
     /**
-     * Set custom AI instructions
+     * Set custom AI instructions directly.
+     * This overrides any AgentConfig settings.
      */
     public void setAiInstructions(String instructions) {
         this.aiInstructions = instructions;
+        Logger.d(TAG, "AI instructions set directly (length: %d)", instructions != null ? instructions.length() : 0);
+    }
+
+    /**
+     * Configure the voice agent with an AgentConfig.
+     * Must be called before starting a conversation.
+     *
+     * @param config The agent configuration containing personality, instructions, etc.
+     */
+    public void configure(AgentConfig config) {
+        this.agentConfig = config;
+        this.aiInstructions = config.buildSystemInstructions();
+        Logger.i(TAG, "Agent configured: name=%s, company=%s, personality=%s",
+            config.getAgentName(), config.getCompanyName(), config.getPersonality().name());
+    }
+
+    /**
+     * Get the current agent configuration.
+     */
+    public AgentConfig getAgentConfig() {
+        return agentConfig;
+    }
+
+    /**
+     * Get the current AI instructions (either from config or set directly).
+     */
+    public String getAiInstructions() {
+        if (aiInstructions == null || aiInstructions.isEmpty()) {
+            aiInstructions = agentConfig.buildSystemInstructions();
+        }
+        return aiInstructions;
     }
     
     /**
@@ -374,9 +407,13 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
         }
         
         Logger.d(TAG, "Configuring session with robot motion support...");
-        
+
+        // Get instructions from config (builds if not already set)
+        String instructions = getAiInstructions();
+        Logger.d(TAG, "Using AI instructions (length: %d)", instructions.length());
+
         // Create session update with robot-aware instructions
-        String sessionUpdate = ClientEvents.sessionUpdateWithRobotMotion(aiInstructions);
+        String sessionUpdate = ClientEvents.sessionUpdateWithRobotMotion(instructions);
         
         webRTCManager.sendEvent(sessionUpdate);
         sessionConfigured = true;

@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="accent">#E040FB</color>
+    <color name="accent_dark">#AA00FF</color>
+    <color name="background">#000000</color>
+    <color name="black">#000000</color>
+    <color name="card">#1E1E1E</color>
+    <color name="error">#F44336</color>
+    <color name="gradient_cyan">#00E5FF</color>
+    <color name="gradient_orange">#FF9100</color>
+    <color name="gradient_pink">#FF4081</color>
+    <color name="gradient_purple">#E040FB</color>
+    <color name="idle">#404040</color>
+    <color name="listening">#E040FB</color>
+    <color name="orb_center">#FFFFFF</color>
+    <color name="orb_glow">#7B1FA2</color>
+    <color name="orb_inner">#E040FB</color>
+    <color name="orb_outer">#AA00FF</color>
+    <color name="orb_ring">#9C27B0</color>
+    <color name="primary">#E040FB</color>
+    <color name="primary_dark">#AA00FF</color>
+    <color name="primary_light">#EA80FC</color>
+    <color name="speaking">#00E5FF</color>
+    <color name="success">#4CAF50</color>
+    <color name="surface">#121212</color>
+    <color name="text_hint">#707070</color>
+    <color name="text_primary">#FFFFFF</color>
+    <color name="text_secondary">#B0B0B0</color>
+    <color name="warning">#FF9800</color>
+    <color name="white">#FFFFFF</color>
+    <string name="app_name">Sanbot Voice Agent</string>
+    <string name="app_subtitle">TripAndEvent AI Assistant</string>
+    <string name="btn_mute">Mute</string>
+    <string name="btn_start">Start Conversation</string>
+    <string name="btn_stop">End Conversation</string>
+    <string name="btn_unmute">Unmute</string>
+    <string name="error_connection_failed">Failed to connect</string>
+    <string name="error_network">Network error</string>
+    <string name="error_permission_denied">Microphone permission is required</string>
+    <string name="notification_text">Conversation in progress</string>
+    <string name="notification_title">Voice Agent Active</string>
+    <string name="settings_debug">Debug Mode</string>
+    <string name="settings_title">Settings</string>
+    <string name="settings_vad">Voice Activity Detection</string>
+    <string name="settings_voice">AI Voice</string>
+    <string name="status_connecting">Connecting…</string>
+    <string name="status_disconnecting">Ending conversation…</string>
+    <string name="status_error">Error occurred</string>
+    <string name="status_listening">Listening…</string>
+    <string name="status_processing">Processing…</string>
+    <string name="status_ready">Tap to start a conversation</string>
+    <string name="status_speaking">Speaking…</string>
+    <string name="status_working">Working…</string>
+    <string name="transcript_hint">Conversation transcript will appear here…</string>
+    <style name="Theme.SanbotVoiceAgent" parent="Theme.MaterialComponents.Light.NoActionBar">
+        <item name="colorPrimary">@color/primary</item>
+        <item name="colorPrimaryDark">@color/primary_dark</item>
+        <item name="colorAccent">@color/accent</item>
+        <item name="android:windowBackground">@color/background</item>
+        <item name="android:statusBarColor">@color/primary_dark</item>
+        <item name="android:navigationBarColor">@color/primary_dark</item>
+    </style>
+    <style name="Theme.SanbotVoiceAgent.Conversation">
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:windowBackground">@color/background</item>
+    </style>
+    <style name="Widget.SanbotVoice.Button.Primary" parent="Widget.MaterialComponents.Button">
+        <item name="android:textColor">@color/white</item>
+        <item name="backgroundTint">@color/accent</item>
+        <item name="cornerRadius">28dp</item>
+    </style>
+    <style name="Widget.SanbotVoice.Button.Secondary" parent="Widget.MaterialComponents.Button.OutlinedButton">
+        <item name="android:textColor">@color/accent</item>
+        <item name="strokeColor">@color/accent</item>
+        <item name="cornerRadius">28dp</item>
+    </style>
+</resources>

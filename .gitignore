@@ -2,3 +2,6 @@
 /.idea
 /build
 /.vscode
+/keystore/
+*.jks
+*.keystore
