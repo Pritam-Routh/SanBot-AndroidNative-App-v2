@@ -270,11 +270,40 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
             @Override
             public void onStateChanged(LiveAvatarSessionManager.SessionState state) {
                 Logger.d(TAG, "LiveAvatar state: %s", state);
+                // When LiveAvatar becomes connected, ensure OpenAI audio is muted
+                if (state == LiveAvatarSessionManager.SessionState.CONNECTED) {
+                    Logger.i(TAG, "LiveAvatar CONNECTED - ensuring OpenAI audio is muted");
+                    if (webRTCManager != null) {
+                        webRTCManager.setRemoteAudioMuted(true);
+                    }
+                }
+                // If LiveAvatar disconnects or errors, unmute OpenAI audio
+                if (state == LiveAvatarSessionManager.SessionState.ERROR ||
+                    state == LiveAvatarSessionManager.SessionState.IDLE) {
+                    if (liveAvatarEnabled) {
+                        Logger.i(TAG, "LiveAvatar disconnected - unmuting OpenAI audio");
+                        if (webRTCManager != null) {
+                            webRTCManager.setRemoteAudioMuted(false);
+                        }
+                    }
+                }
             }
 
             @Override
             public void onStreamReady() {
-                Logger.i(TAG, "LiveAvatar stream ready");
+                Logger.i(TAG, "LiveAvatar stream ready - avatar is now ready for lip sync");
+                // Enable text buffer for lip sync now that stream is ready
+                liveAvatarSessionManager.enableTextBuffer();
+                // Ensure OpenAI audio stays muted (avatar will handle audio)
+                if (webRTCManager != null) {
+                    webRTCManager.setRemoteAudioMuted(true);
+                }
+                // Configure audio booster for LiveAvatar TTS playback
+                // LiveKit audio goes through STREAM_MUSIC, so boost that
+                if (audioBooster != null && !audioBooster.isConfigured()) {
+                    audioBooster.configureForMaxVolume();
+                    Logger.i(TAG, "Audio boosted for LiveAvatar: %s", audioBooster.getVolumeInfo());
+                }
                 if (listener != null) {
                     listener.onAvatarVideoReady();
                 }
@@ -309,6 +338,11 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
             public void onError(String error) {
                 Logger.e(TAG, "LiveAvatar error: %s", error);
                 liveAvatarEnabled = false;
+                // Unmute OpenAI audio since avatar failed - let user hear the agent
+                if (webRTCManager != null) {
+                    Logger.i(TAG, "Unmuting OpenAI audio - LiveAvatar failed, falling back to direct audio");
+                    webRTCManager.setRemoteAudioMuted(false);
+                }
                 if (listener != null) {
                     listener.onAvatarError(error);
                 }
@@ -798,9 +832,11 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
         Logger.d(TAG, "Remote audio track received - AI is speaking");
         setState(ConversationState.SPEAKING);
 
-        // When LiveAvatar is enabled, mute OpenAI's WebRTC audio
+        // When LiveAvatar is ENABLED (not just connected), mute OpenAI's WebRTC audio
         // LiveAvatar will play audio from its own TTS (perfect audio-visual sync)
-        if (liveAvatarEnabled && liveAvatarSessionManager != null && liveAvatarSessionManager.isConnected()) {
+        // IMPORTANT: Mute immediately when enabled, don't wait for connection
+        // The LiveAvatar session connects asynchronously and audio track arrives before it's ready
+        if (liveAvatarEnabled && liveAvatarSessionManager != null) {
             Logger.i(TAG, "Muting OpenAI audio - LiveAvatar will handle audio playback");
             webRTCManager.setRemoteAudioMuted(true);
             // Enable text buffer for lip sync

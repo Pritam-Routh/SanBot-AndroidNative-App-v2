@@ -134,6 +134,18 @@ class LiveAvatarSessionManager(context: Context) : AudioDeltaBuffer.AudioFlushLi
     // Current audio streaming event ID (used to group audio chunks together)
     private var currentStreamEventId: String? = null
 
+    // Audio chunk counter for debugging
+    private var audioChunkCount = 0
+
+    // Flag to track if we've sent agent.speak_start for current stream
+    private var audioStreamStarted = false
+
+    // Track total audio duration in ms for minimum duration requirement
+    private var audioStreamDurationMs = 0L
+
+    // Minimum audio duration required for lip sync (HeyGen requires ~300-500ms)
+    private val MIN_AUDIO_DURATION_MS = 300L
+
     // UI
     private var videoRenderer: SurfaceViewRenderer? = null
     private var listener: SessionListener? = null
@@ -300,6 +312,11 @@ class LiveAvatarSessionManager(context: Context) : AudioDeltaBuffer.AudioFlushLi
         apiClient.startSession(object : LiveAvatarApiClient.SessionCallback {
             override fun onSuccess(info: LiveAvatarApiClient.SessionInfo) {
                 sessionInfo = info
+                // Store session ID in API client for speak commands
+                if (info.sessionId != null) {
+                    apiClient.setSessionId(info.sessionId)
+                    Log.i(TAG, "Session ID stored: ${info.sessionId}")
+                }
                 Log.d(TAG, "Session started: $info")
                 mainHandler.post { connectToSession(info) }
             }
@@ -325,11 +342,15 @@ class LiveAvatarSessionManager(context: Context) : AudioDeltaBuffer.AudioFlushLi
         }
 
         // Connect to WebSocket if URL provided
+        // Note: WebSocket is optional in FULL mode - we can use LiveKit data channel for text commands
+        // WebSocket is primarily needed for CUSTOM mode (audio streaming)
         if (info.wsUrl != null) {
-            Log.d(TAG, "Connecting to WebSocket for audio commands...")
+            Log.d(TAG, "Connecting to WebSocket for text/audio commands...")
             connectWebSocket(info.wsUrl)
         } else {
-            Log.w(TAG, "*** NO WEBSOCKET URL - Audio commands will NOT work! ***")
+            Log.w(TAG, "No WebSocket URL provided - will use LiveKit data channel for text commands")
+            // In FULL mode, this is OK - we can send text via LiveKit data channel
+            // Don't treat this as an error, just log a warning
         }
 
         // If no LiveKit or WebSocket, we're still connected via REST
@@ -413,8 +434,15 @@ class LiveAvatarSessionManager(context: Context) : AudioDeltaBuffer.AudioFlushLi
      * Make avatar speak PCM audio directly (CUSTOM mode)
      * LOWEST LATENCY OPTION - bypasses TTS completely
      *
-     * Sends audio chunk in JSON with base64-encoded audio data.
-     * Format: {"type": "agent.speak", "event_id": "...", "audio": "base64..."}
+     * Sends audio chunk via LiveAvatar's WebSocket for lip sync.
+     *
+     * Based on LiveAvatar Web SDK (audio_utils.ts):
+     * - Audio is split into 20ms chunks (960 bytes at 24kHz 16-bit mono)
+     * - Each chunk is sent as base64 encoded string
+     * - Format: {"type": "agent.speak", "event_id": "...", "audio": "base64..."}
+     * - End signal: {"type": "agent.speak_end", "event_id": "..."}
+     *
+     * NOTE: The SDK does NOT use agent.speak_start - chunks are sent directly.
      *
      * @param audioBytes Raw PCM bytes (24kHz, 16-bit signed, mono)
      */
@@ -424,16 +452,30 @@ class LiveAvatarSessionManager(context: Context) : AudioDeltaBuffer.AudioFlushLi
             return
         }
 
+        // Check WebSocket is connected - audio MUST go via WebSocket
+        if (!webSocketConnected) {
+            Log.e(TAG, "*** Cannot send audio: WebSocket not connected! ***")
+            return
+        }
+
         // Start new event_id if not currently streaming
         if (currentStreamEventId == null) {
             currentStreamEventId = UUID.randomUUID().toString()
-            Log.d(TAG, "Starting new audio stream: $currentStreamEventId")
+            audioChunkCount = 0
+            audioStreamStarted = true  // Mark as started immediately
+            audioStreamDurationMs = 0L
+            Log.i(TAG, "=== NEW AUDIO STREAM === event_id: $currentStreamEventId")
         }
 
         val eventId = currentStreamEventId ?: return
 
+        audioChunkCount++
+        // Track duration: each chunk is 20ms (960 bytes at 24kHz 16-bit mono)
+        audioStreamDurationMs += LiveAvatarConfig.AUDIO_CHUNK_DURATION_MS
+
         try {
             // Encode audio as base64 for safe JSON transmission
+            // SDK uses base64 string directly without audio_format metadata
             val base64Audio = android.util.Base64.encodeToString(audioBytes, android.util.Base64.NO_WRAP)
 
             val command = JSONObject().apply {
@@ -442,7 +484,13 @@ class LiveAvatarSessionManager(context: Context) : AudioDeltaBuffer.AudioFlushLi
                 put("audio", base64Audio)
             }
 
-            sendToWebSocket(command.toString())
+            // Log every 10th chunk to avoid log spam (20ms * 10 = 200ms intervals)
+            if (audioChunkCount % 10 == 1) {
+                Log.d(TAG, "Audio chunk #$audioChunkCount (${audioBytes.size} bytes PCM, duration: ${audioStreamDurationMs}ms)")
+            }
+
+            // Send via LiveAvatar's WebSocket
+            sendToLiveAvatarWebSocket(command.toString())
 
         } catch (e: JSONException) {
             Log.e(TAG, "Error creating audio chunk JSON", e)
@@ -464,15 +512,81 @@ class LiveAvatarSessionManager(context: Context) : AudioDeltaBuffer.AudioFlushLi
 
         Log.d(TAG, "Interrupting avatar")
 
-        // Clear any pending audio and text
+        // Clear any pending audio and text buffers (use interrupt() to reset state)
         audioDeltaBuffer.clear()
-        textDeltaBuffer.clear()
-        currentStreamEventId = null
+        textDeltaBuffer.interrupt()  // Use interrupt() to reset first flush state
+
+        // Reset all audio stream state
+        resetAudioStreamState()
 
         sendInterrupt()
 
         // Reset interrupt flag after brief delay
         mainHandler.postDelayed({ isInterrupting.set(false) }, 500)
+    }
+
+    /**
+     * Start avatar listening mode
+     * Based on SDK: Prefers WebSocket with "type" field, falls back to data channel with "event_type"
+     */
+    fun startListening() {
+        if (!isConnected()) {
+            Log.w(TAG, "Cannot startListening: not connected")
+            return
+        }
+
+        try {
+            // SDK prefers WebSocket for listening commands
+            if (webSocketConnected) {
+                val command = JSONObject().apply {
+                    put("type", "agent.start_listening")
+                    put("event_id", UUID.randomUUID().toString())
+                }
+                sendToLiveAvatarWebSocket(command.toString())
+                Log.d(TAG, "Start listening sent via WebSocket")
+            } else {
+                val command = JSONObject().apply {
+                    put("event_type", "avatar.start_listening")
+                }
+                sendViaDataChannel(command.toString())
+                Log.d(TAG, "Start listening sent via data channel")
+            }
+
+        } catch (e: JSONException) {
+            Log.e(TAG, "Error creating start_listening command", e)
+        }
+    }
+
+    /**
+     * Stop avatar listening mode
+     * Based on SDK: Prefers WebSocket with "type" field, falls back to data channel with "event_type"
+     */
+    fun stopListening() {
+        if (!isConnected()) {
+            Log.w(TAG, "Cannot stopListening: not connected")
+            return
+        }
+
+        try {
+            // SDK prefers WebSocket for listening commands
+            if (webSocketConnected) {
+                val command = JSONObject().apply {
+                    put("type", "agent.stop_listening")
+                    put("event_id", UUID.randomUUID().toString())
+                }
+                sendToLiveAvatarWebSocket(command.toString())
+                Log.d(TAG, "Stop listening sent via WebSocket")
+            } else {
+                val command = JSONObject().apply {
+                    put("event_type", "avatar.stop_listening")
+                }
+                sendViaDataChannel(command.toString())
+                Log.d(TAG, "Stop listening sent via data channel")
+            }
+
+        } catch (e: JSONException) {
+            Log.e(TAG, "Error creating stop_listening command", e)
+        }
     }
 
     // ============================================
@@ -610,11 +724,34 @@ class LiveAvatarSessionManager(context: Context) : AudioDeltaBuffer.AudioFlushLi
 
     private fun handleRoomEvent(roomEvent: RoomEvent) {
         when (roomEvent) {
+            is RoomEvent.DataReceived -> {
+                // Handle data from avatar via LiveKit data channel
+                val data = roomEvent.data
+                val topic = roomEvent.topic
+
+                // Only handle messages on agent-response topic
+                if (topic == LiveAvatarConfig.DATA_CHANNEL_RESPONSE_TOPIC) {
+                    try {
+                        val message = String(data, Charsets.UTF_8)
+                        Log.d(TAG, "DataChannel [${topic}]: ${message.take(100)}...")
+                        mainHandler.post { handleWebSocketMessage(message) }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Error parsing data channel message", e)
+                    }
+                }
+            }
+
             is RoomEvent.TrackSubscribed -> {
                 val subscribedTrack: Track = roomEvent.track
                 val subscribedParticipant: RemoteParticipant = roomEvent.participant
                 Log.d(TAG, "Track subscribed: ${subscribedTrack.javaClass.simpleName} " +
                         "from participant: ${subscribedParticipant.identity}")
+
+                // Only handle tracks from the avatar participant (SDK identifies as "heygen")
+                if (subscribedParticipant.identity?.value != LiveAvatarConfig.AVATAR_PARTICIPANT_ID) {
+                    Log.d(TAG, "Ignoring track from non-avatar participant: ${subscribedParticipant.identity}")
+                    return
+                }
 
                 when (subscribedTrack) {
                     is RemoteVideoTrack -> {
@@ -713,7 +850,7 @@ class LiveAvatarSessionManager(context: Context) : AudioDeltaBuffer.AudioFlushLi
         }
 
         remoteAudioTrack = track
-        Log.d(TAG, "Audio track received")
+        Log.i(TAG, "Audio track received from LiveAvatar - audio auto-plays via LiveKit subscription")
 
         checkStreamReady()
     }
@@ -823,31 +960,54 @@ class LiveAvatarSessionManager(context: Context) : AudioDeltaBuffer.AudioFlushLi
     private fun handleWebSocketMessage(message: String) {
         mainHandler.post {
             try {
-                val json = JSONObject(message)
-                val type = json.optString("type", "")
+                // Log ALL messages from LiveAvatar for debugging
+                val preview = if (message.length > 200) message.substring(0, 200) + "..." else message
+                Log.i(TAG, "<<< WebSocket RECEIVED: $preview")
 
-                Log.d(TAG, "WebSocket message: $type")
+                val json = JSONObject(message)
+                val type = json.optString("type", json.optString("event_type", ""))
 
                 when (type) {
-                    "user.transcription" -> {
-                        listener?.onUserTranscription(json.optString("text", ""))
+                    "user.transcription", "user_transcription" -> {
+                        val text = json.optString("text", json.optString("transcript", ""))
+                        listener?.onUserTranscription(text)
                     }
-                    "avatar.transcription" -> {
-                        listener?.onAvatarTranscription(json.optString("text", ""))
+                    "avatar.transcription", "avatar_transcription" -> {
+                        val text = json.optString("text", json.optString("transcript", ""))
+                        listener?.onAvatarTranscription(text)
                     }
-                    "avatar.speak_started" -> {
+                    "avatar.speak_started", "avatar_speak_started", "speak_started" -> {
+                        Log.i(TAG, "*** Avatar started speaking! ***")
                         listener?.onAvatarSpeakStarted()
                     }
-                    "avatar.speak_ended" -> {
+                    "avatar.speak_ended", "avatar_speak_ended", "speak_ended" -> {
+                        Log.i(TAG, "*** Avatar finished speaking ***")
+                        listener?.onAvatarSpeakEnded()
+                    }
+                    "task.started", "task_started" -> {
+                        Log.i(TAG, "*** Task started ***")
+                        listener?.onAvatarSpeakStarted()
+                    }
+                    "task.completed", "task_completed" -> {
+                        Log.i(TAG, "*** Task completed ***")
                         listener?.onAvatarSpeakEnded()
                     }
                     "error" -> {
-                        val errorMsg = json.optString("message", "Unknown error")
-                        Log.e(TAG, "WebSocket error: $errorMsg")
+                        val errorMsg = json.optString("message", json.optString("error", "Unknown error"))
+                        Log.e(TAG, "*** WebSocket ERROR: $errorMsg ***")
+                    }
+                    "" -> {
+                        // No type field - log the entire message
+                        Log.w(TAG, "WebSocket message without type: $message")
+                    }
+                    else -> {
+                        // Unknown type - log it
+                        Log.d(TAG, "WebSocket message type '$type' (unhandled)")
                     }
                 }
             } catch (e: JSONException) {
-                Log.e(TAG, "Error parsing WebSocket message", e)
+                // Not JSON - might be binary or other format
+                Log.w(TAG, "WebSocket message (non-JSON): ${message.take(100)}")
             }
         }
     }
@@ -859,19 +1019,50 @@ class LiveAvatarSessionManager(context: Context) : AudioDeltaBuffer.AudioFlushLi
     /**
      * Send audio end signal to LiveAvatar
      * Format: {"type": "agent.speak_end", "event_id": "..."}
+     *
+     * IMPORTANT:
+     * - Must go via LiveAvatar's WebSocket
+     * - HeyGen requires minimum ~300ms audio before lip sync activates
+     * - If audio is too short, we pad with silence
      */
     private fun sendAudioEnd() {
         val eventId = currentStreamEventId ?: return
-        currentStreamEventId = null  // Reset for next stream
+        val totalChunks = audioChunkCount
+        val totalDurationMs = audioStreamDurationMs
+
+        // Check if we even started (no audio was sent)
+        if (!audioStreamStarted) {
+            Log.w(TAG, "Audio end called but no audio was streamed - skipping")
+            resetAudioStreamState()
+            return
+        }
+
+        // CRITICAL: HeyGen requires minimum audio duration for lip sync
+        // If audio is too short, pad with silence to meet minimum
+        if (totalDurationMs < MIN_AUDIO_DURATION_MS) {
+            val paddingNeeded = MIN_AUDIO_DURATION_MS - totalDurationMs
+            val paddingChunks = (paddingNeeded / LiveAvatarConfig.AUDIO_CHUNK_DURATION_MS).toInt() + 1
+            Log.w(TAG, "Audio too short (${totalDurationMs}ms < ${MIN_AUDIO_DURATION_MS}ms) - padding with $paddingChunks silent chunks")
+
+            // Send silent PCM chunks (zeros)
+            val silentChunk = ByteArray(LiveAvatarConfig.BYTES_PER_CHUNK)  // All zeros = silence
+            repeat(paddingChunks) {
+                sendSilentChunk(eventId, silentChunk)
+            }
+        }
+
+        // Reset state BEFORE sending end (in case of reentrant calls)
+        resetAudioStreamState()
 
         try {
             val command = JSONObject().apply {
-                put("type", "agent.speak_end")
+                put("type", "agent.speak_end")  // HeyGen expects "type"
                 put("event_id", eventId)
             }
 
-            sendToWebSocket(command.toString())
-            Log.d(TAG, "Sent agent.speak_end for event: $eventId")
+            // CRITICAL: Send via LiveAvatar's WebSocket
+            sendToLiveAvatarWebSocket(command.toString())
+            Log.i(TAG, "=== AUDIO STREAM COMPLETE === event_id: $eventId, total chunks: $totalChunks (${totalDurationMs}ms audio)")
 
         } catch (e: JSONException) {
             Log.e(TAG, "Error creating audio end JSON", e)
@@ -879,24 +1070,80 @@ class LiveAvatarSessionManager(context: Context) : AudioDeltaBuffer.AudioFlushLi
     }
 
     /**
-     * Send interrupt signal to LiveAvatar
-     *
-     * Uses avatar.interrupt event type as per LiveAvatar SDK.
-     * Stops avatar mid-speech for barge-in support.
-     *
-     * Format: {"event_type": "avatar.interrupt"}
+     * Send a silent audio chunk (used for padding short audio)
      */
-    private fun sendInterrupt() {
+    private fun sendSilentChunk(eventId: String, silentChunk: ByteArray) {
         try {
+            val base64Audio = android.util.Base64.encodeToString(silentChunk, android.util.Base64.NO_WRAP)
+
             val command = JSONObject().apply {
-                put("event_type", "avatar.interrupt")
+                put("type", "agent.speak")
+                put("event_id", eventId)
+                put("audio", base64Audio)
             }
 
-            sendToWebSocket(command.toString())
-            Log.d(TAG, "Sent avatar.interrupt")
+            sendToLiveAvatarWebSocket(command.toString())
 
         } catch (e: JSONException) {
-            Log.e(TAG, "Error creating interrupt JSON", e)
+            Log.e(TAG, "Error sending silent chunk", e)
+        }
+    }
+
+    /**
+     * Reset all audio stream state variables
+     */
+    private fun resetAudioStreamState() {
+        currentStreamEventId = null
+        audioChunkCount = 0
+        audioStreamStarted = false
+        audioStreamDurationMs = 0L
+    }
+
+    /**
+     * Send interrupt signal to LiveAvatar
+     *
+     * Stops avatar mid-speech for barge-in support.
+     * Based on SDK: Prefers WebSocket with "type" field, falls back to data channel with "event_type"
+     */
+    private fun sendInterrupt() {
+        Log.d(TAG, "Sending interrupt...")
+
+        try {
+            // SDK prefers WebSocket for interrupt (uses "type": "agent.interrupt")
+            if (webSocketConnected) {
+                val command = JSONObject().apply {
+                    put("type", "agent.interrupt")
+                    put("event_id", UUID.randomUUID().toString())
+                }
+                sendToLiveAvatarWebSocket(command.toString())
+                Log.d(TAG, "Interrupt sent via WebSocket")
+            } else {
+                // Fallback to data channel with "event_type" field
+                val command = JSONObject().apply {
+                    put("event_type", "avatar.interrupt")
+                }
+                sendViaDataChannel(command.toString())
+                Log.d(TAG, "Interrupt sent via data channel")
+            }
+
+        } catch (e: JSONException) {
+            Log.e(TAG, "Error creating interrupt command", e)
+        }
+    }
+
+    /**
+     * Send command to LiveAvatar via its dedicated WebSocket
+     * This is the PRIMARY transport for all avatar commands (audio, interrupt, etc.)
+     */
+    private fun sendToLiveAvatarWebSocket(json: String) {
+        val ws = webSocket
+        if (ws != null && webSocketConnected) {
+            ws.send(json)
+            // Log preview (first 100 chars) to avoid flooding logs with base64
+            val preview = if (json.length > 100) json.substring(0, 100) + "..." else json
+            Log.d(TAG, "WebSocket SENT: $preview")
+        } else {
+            Log.e(TAG, "*** CRITICAL: Cannot send - LiveAvatar WebSocket not connected! ***")
         }
     }
 
@@ -936,25 +1183,100 @@ class LiveAvatarSessionManager(context: Context) : AudioDeltaBuffer.AudioFlushLi
     }
 
     /**
-     * Send text command to LiveAvatar (for repeat text)
+     * Send text command to LiveAvatar for TTS + lip sync
      *
-     * Uses avatar.speak_text event type as per LiveAvatar SDK.
-     * LiveAvatar will use its TTS to generate audio and lip sync.
+     * Based on official LiveAvatar Web SDK (LiveAvatarSession.ts):
+     * - Text commands ALWAYS go via LiveKit data channel with "event_type": "avatar.speak_text"
+     * - WebSocket is ONLY used for audio streaming (CUSTOM mode)
+     * - Topic: "agent-control"
      *
-     * Format: {"event_type": "avatar.speak_text", "text": "..."}
+     * This matches the SDK's repeat() method which uses sendCommandEvent() -> publishData()
      */
     private fun sendTextCommand(text: String) {
+        if (text.isBlank()) {
+            return
+        }
+
+        Log.i(TAG, "=== SENDING TEXT FOR LIP SYNC === text: ${text.take(50)}...")
+
+        // Per SDK: Text commands ALWAYS go via LiveKit data channel (not WebSocket)
+        sendSpeakViaDataChannel(text)
+    }
+
+    /**
+     * Send speak command via LiveKit data channel
+     *
+     * IMPORTANT: Based on SDK analysis (LiveAvatarSession.ts):
+     * - Audio commands (agent.speak, agent.speak_end) → WebSocket with "type" field
+     * - Text commands (avatar.speak_text, avatar.speak_response) → LiveKit Data Channel with "event_type" field
+     *
+     * The SDK uses "event_type" (NOT "type") for data channel commands!
+     * See SDK's repeat() method: {event_type: "avatar.speak_text", text: "..."}
+     */
+    private fun sendSpeakViaDataChannel(text: String) {
         try {
+            // Format based on SDK's CommandEventsEnum.AVATAR_SPEAK_TEXT
+            // CRITICAL: SDK uses "event_type" NOT "type" for data channel commands!
             val command = JSONObject().apply {
-                put("event_type", "avatar.speak_text")
+                put("event_type", "avatar.speak_text")  // Must be "event_type" not "type"!
                 put("text", text)
             }
 
-            sendToWebSocket(command.toString())
-            Log.d(TAG, "Sent avatar.speak_text: ${text.take(50)}...")
+            // SDK sends text commands via LiveKit data channel, NOT WebSocket
+            sendViaDataChannel(command.toString())
+            Log.i(TAG, ">>> DataChannel SENT [avatar.speak_text]: ${text.take(40)}...")
 
-        } catch (e: JSONException) {
-            Log.e(TAG, "Error creating text command JSON", e)
+        } catch (e: Exception) {
+            Log.e(TAG, "DataChannel speak failed", e)
+        }
+    }
+
+    /**
+     * Send command via LiveKit data channel (primary transport for avatar commands)
+     *
+     * LiveAvatar expects commands on a specific topic for avatar control.
+     * This includes audio streaming, text commands, and interrupts.
+     *
+     * Topic is configurable via LiveAvatarConfig.DATA_CHANNEL_TOPIC
+     */
+    private fun sendViaDataChannel(json: String) {
+        val currentRoom = room
+        if (currentRoom == null) {
+            Log.e(TAG, "*** CRITICAL: Cannot send via data channel - room is NULL! ***")
+            return
+        }
+
+        // Verify room is connected and log participants
+        val connectionState = currentRoom.state
+        val participantCount = currentRoom.remoteParticipants.size
+        val participantIds = currentRoom.remoteParticipants.keys.map { it.value }.joinToString(", ")
+        Log.i(TAG, "DataChannel: Room state=$connectionState, participants=$participantCount [$participantIds]")
+
+        // Check if avatar participant is in the room
+        val hasAvatarParticipant = currentRoom.remoteParticipants.keys.any {
+            it.value == LiveAvatarConfig.AVATAR_PARTICIPANT_ID
+        }
+        if (!hasAvatarParticipant && participantCount > 0) {
+            Log.w(TAG, "Avatar participant '${LiveAvatarConfig.AVATAR_PARTICIPANT_ID}' not found in room. Available: [$participantIds]")
+        }
+
+        val topic = LiveAvatarConfig.DATA_CHANNEL_TOPIC
+
+        coroutineScope.launch {
+            try {
+                val data = json.toByteArray(Charsets.UTF_8)
+
+                currentRoom.localParticipant.publishData(
+                    data,
+                    DataPublishReliability.RELIABLE,
+                    topic = topic
+                )
+
+                val preview = if (json.length > 100) json.substring(0, 100) + "..." else json
+                Log.i(TAG, "✓ DataChannel SENT [$topic] (${data.size} bytes): $preview")
+            } catch (e: Exception) {
+                Log.e(TAG, "*** FAILED to send via data channel: ${e.message}", e)
+            }
         }
     }
 

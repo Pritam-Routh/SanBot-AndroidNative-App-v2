@@ -47,6 +47,9 @@ public class LiveAvatarApiClient {
     // Session token for LiveAvatar API authentication
     private String sessionToken;
 
+    // Session ID (needed for speak commands)
+    private String sessionId;
+
     // Singleton instance
     private static LiveAvatarApiClient instance;
 
@@ -84,6 +87,20 @@ public class LiveAvatarApiClient {
         return sessionToken;
     }
 
+    /**
+     * Set the session ID (extracted from session info after startSession)
+     */
+    public void setSessionId(String id) {
+        this.sessionId = id;
+    }
+
+    /**
+     * Get the current session ID
+     */
+    public String getSessionId() {
+        return sessionId;
+    }
+
     // ============================================
     // REQUEST/RESPONSE MODELS
     // ============================================
@@ -101,10 +118,30 @@ public class LiveAvatarApiClient {
         @SerializedName("is_sandbox")
         public boolean isSandbox;
 
-        public GetTokenRequest(String mode, String avatarId, boolean isSandbox) {
+        @SerializedName("avatar_persona")
+        public AvatarPersona avatarPersona;
+
+        public GetTokenRequest(String mode, String avatarId, boolean isSandbox, AvatarPersona persona) {
             this.mode = mode;
             this.avatarId = avatarId;
             this.isSandbox = isSandbox;
+            this.avatarPersona = persona;
+        }
+    }
+
+    /**
+     * Avatar persona configuration for FULL mode
+     */
+    public static class AvatarPersona {
+        @SerializedName("voice_id")
+        public String voiceId;
+
+        @SerializedName("language")
+        public String language;
+
+        public AvatarPersona(String voiceId, String language) {
+            this.voiceId = voiceId;
+            this.language = language;
         }
     }
 
@@ -217,10 +254,20 @@ public class LiveAvatarApiClient {
     public void getSessionToken(@Nullable String avatarId, @NonNull TokenCallback callback) {
         String url = backendBaseUrl + "/liveavatar/session/token";
 
+        String mode = LiveAvatarConfig.getSessionMode();
+        AvatarPersona persona = null;
+
+        // FULL mode requires avatar_persona with voice configuration
+        if ("FULL".equals(mode)) {
+            // Use default voice and language for FULL mode
+            persona = new AvatarPersona(null, "en");  // null voice_id = use avatar's default voice
+        }
+
         GetTokenRequest request = new GetTokenRequest(
-            LiveAvatarConfig.getSessionMode(),
+            mode,
             avatarId != null ? avatarId : LiveAvatarConfig.getAvatarId(),
-            false  // Always use production mode - this avatar requires it
+            false,  // Always use production mode - this avatar requires it
+            persona
         );
 
         String json = gson.toJson(request);
@@ -421,5 +468,169 @@ public class LiveAvatarApiClient {
      */
     public void clearSession() {
         sessionToken = null;
+        sessionId = null;
+    }
+
+    // ============================================
+    // SPEAK COMMANDS (FOR LIP-SYNC)
+    // ============================================
+
+    /**
+     * Request body for speak command
+     */
+    public static class SpeakRequest {
+        @SerializedName("session_id")
+        public String sessionId;
+
+        @SerializedName("text")
+        public String text;
+
+        @SerializedName("task_type")
+        public String taskType;  // "repeat" or "talk"
+
+        public SpeakRequest(String sessionId, String text, String taskType) {
+            this.sessionId = sessionId;
+            this.text = text;
+            this.taskType = taskType;
+        }
+    }
+
+    /**
+     * Response from speak command
+     */
+    public static class SpeakResponse {
+        @SerializedName("task_id")
+        public String taskId;
+    }
+
+    /**
+     * Make avatar speak text with lip sync
+     *
+     * Uses backend proxy endpoint which has the API key and fallback logic.
+     * The backend will try multiple endpoints (LiveAvatar and HeyGen).
+     *
+     * @param text Text for avatar to speak
+     * @param callback Response callback
+     */
+    public void speak(@NonNull String text, @NonNull SimpleCallback callback) {
+        if (text == null || text.trim().isEmpty()) {
+            callback.onSuccess();  // Nothing to speak
+            return;
+        }
+
+        if (sessionId == null || sessionId.isEmpty()) {
+            Log.e(TAG, "*** SPEAK FAILED: Session ID not set! ***");
+            callback.onError("Session ID not set");
+            return;
+        }
+
+        // Use backend proxy endpoint (has API key and fallback logic)
+        String url = backendBaseUrl + "/liveavatar/speak";
+
+        SpeakRequest request = new SpeakRequest(sessionId, text.trim(), "repeat");
+        String json = gson.toJson(request);
+
+        Request httpRequest = new Request.Builder()
+                .url(url)
+                .addHeader("Content-Type", "application/json")
+                .post(RequestBody.create(json, JSON))
+                .build();
+
+        Log.i(TAG, "=== SPEAK REQUEST (Backend Proxy) ===");
+        Log.i(TAG, "URL: " + url);
+        Log.i(TAG, "Body: " + json);
+
+        httpClient.newCall(httpRequest).enqueue(new Callback() {
+            @Override
+            public void onFailure(@NonNull Call call, @NonNull IOException e) {
+                Log.e(TAG, "*** SPEAK NETWORK ERROR ***", e);
+                callback.onError("Network error: " + e.getMessage());
+            }
+
+            @Override
+            public void onResponse(@NonNull Call call, @NonNull Response response) throws IOException {
+                String body = response.body() != null ? response.body().string() : "";
+
+                Log.i(TAG, "=== SPEAK RESPONSE ===");
+                Log.i(TAG, "HTTP " + response.code());
+                Log.i(TAG, "Body: " + body);
+
+                if (response.isSuccessful()) {
+                    try {
+                        // Check if response is HTML (Vite fallback) instead of JSON
+                        if (body.startsWith("<!DOCTYPE") || body.startsWith("<html")) {
+                            Log.e(TAG, "*** SPEAK FAILED: Got HTML instead of JSON (backend route not found) ***");
+                            callback.onError("Backend route not configured");
+                            return;
+                        }
+
+                        ActionResponse actionResponse = gson.fromJson(body, ActionResponse.class);
+                        if (actionResponse != null && actionResponse.success) {
+                            Log.i(TAG, "✓ SPEAK SUCCESS");
+                            callback.onSuccess();
+                        } else {
+                            String error = actionResponse != null ? actionResponse.error : "Unknown error";
+                            Log.e(TAG, "Speak failed: " + error);
+                            callback.onError(error);
+                        }
+                    } catch (Exception e) {
+                        // Parse failure means response wasn't valid JSON - treat as error
+                        Log.e(TAG, "*** SPEAK FAILED: Response not valid JSON ***");
+                        callback.onError("Invalid response format");
+                    }
+                } else {
+                    Log.e(TAG, "*** SPEAK FAILED *** HTTP " + response.code());
+                    callback.onError("HTTP " + response.code() + ": " + body);
+                }
+            }
+        });
+    }
+
+    /**
+     * Interrupt avatar speech (for barge-in)
+     *
+     * Uses backend proxy endpoint for interrupt.
+     *
+     * @param callback Response callback
+     */
+    public void interrupt(@NonNull SimpleCallback callback) {
+        if (sessionId == null || sessionId.isEmpty()) {
+            callback.onSuccess();  // No session to interrupt
+            return;
+        }
+
+        // Use backend proxy endpoint
+        String url = backendBaseUrl + "/liveavatar/interrupt";
+
+        String json = "{\"session_id\":\"" + sessionId + "\"}";
+
+        Request httpRequest = new Request.Builder()
+                .url(url)
+                .addHeader("Content-Type", "application/json")
+                .post(RequestBody.create(json, JSON))
+                .build();
+
+        Log.d(TAG, "Interrupt request: " + url);
+
+        httpClient.newCall(httpRequest).enqueue(new Callback() {
+            @Override
+            public void onFailure(@NonNull Call call, @NonNull IOException e) {
+                Log.w(TAG, "Interrupt request failed", e);
+                callback.onError("Network error: " + e.getMessage());
+            }
+
+            @Override
+            public void onResponse(@NonNull Call call, @NonNull Response response) throws IOException {
+                String body = response.body() != null ? response.body().string() : "";
+                Log.d(TAG, "Interrupt response: HTTP " + response.code() + " - " + body);
+
+                if (response.isSuccessful()) {
+                    Log.d(TAG, "Interrupt success");
+                    callback.onSuccess();
+                } else {
+                    callback.onError("HTTP " + response.code() + ": " + body);
+                }
+            }
+        });
     }
 }

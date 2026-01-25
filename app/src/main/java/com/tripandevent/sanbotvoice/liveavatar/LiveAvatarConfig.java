@@ -18,9 +18,21 @@ public class LiveAvatarConfig {
     }
 
     /**
-     * Whether to use audio streaming mode (lowest latency)
-     * When true: OpenAI audio deltas are sent directly to LiveAvatar
-     * When false: Text deltas are used (higher latency, but more compatible)
+     * Whether to use audio streaming mode
+     *
+     * Based on LiveAvatar Web SDK analysis:
+     *
+     * CUSTOM mode supports streaming external audio for lip sync:
+     * - Audio chunks (24kHz 16-bit PCM) are sent via WebSocket as base64
+     * - Format: {type: "agent.speak", event_id: "...", audio: "base64..."}
+     * - End signal: {type: "agent.speak_end", event_id: "..."}
+     * - Server performs lip sync rendering on the video stream
+     *
+     * When true: Use external audio (from OpenAI) with server-side lip sync
+     * When false: Use text-based TTS (LiveAvatar's built-in TTS)
+     *
+     * Note: Audio streaming in CUSTOM mode DOES support lip sync -
+     * the server analyzes the audio and generates matching mouth movements.
      */
     public static boolean useAudioStreaming() {
         return BuildConfig.LIVEAVATAR_AUDIO_STREAMING;
@@ -42,12 +54,25 @@ public class LiveAvatarConfig {
     }
 
     /**
-     * Session mode:
-     * - CUSTOM: Required for external AI (OpenAI). Allows streaming audio for lip sync via repeatAudio/agent.speak
-     * - FULL: Uses LiveAvatar's internal AI and TTS (not compatible with external audio)
+     * Session mode (based on LiveAvatar Web SDK):
+     *
+     * FULL mode:
+     * - Complete turnkey avatar interaction
+     * - Built-in text-to-speech (voice_id, context_id, language)
+     * - Avatar generates voice responses automatically
+     * - Use session.message() for text responses
+     * - REQUIRED when using WebRTC mode (audio not available as deltas)
+     *
+     * CUSTOM mode:
+     * - Bring your own TTS/audio integration
+     * - More control over voice synthesis
+     * - Use session.repeatAudio() with PCM 24kHz audio
+     * - Only works when you have raw PCM audio data (not WebRTC)
      */
     public static String getSessionMode() {
-        return "CUSTOM";
+        // Use FULL mode because WebRTC audio isn't available as delta events
+        // FULL mode uses LiveAvatar's built-in TTS for lip sync
+        return "FULL";
     }
 
     // ============================================
@@ -104,6 +129,24 @@ public class LiveAvatarConfig {
      * WebSocket reconnection attempts
      */
     public static final int WEBSOCKET_RECONNECT_ATTEMPTS = 3;
+
+    /**
+     * LiveKit data channel topic for avatar commands
+     *
+     * LiveAvatar SDK uses "agent-control" for sending commands to the avatar.
+     * Responses come on "agent-response" topic.
+     */
+    public static final String DATA_CHANNEL_TOPIC = "agent-control";
+
+    /**
+     * LiveKit data channel topic for receiving avatar responses
+     */
+    public static final String DATA_CHANNEL_RESPONSE_TOPIC = "agent-response";
+
+    /**
+     * HeyGen avatar participant identity in LiveKit room
+     */
+    public static final String AVATAR_PARTICIPANT_ID = "heygen";
 
     // ============================================
     // VIDEO QUALITY SETTINGS

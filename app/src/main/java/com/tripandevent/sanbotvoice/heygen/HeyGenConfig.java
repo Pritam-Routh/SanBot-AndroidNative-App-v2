@@ -41,14 +41,18 @@ public class HeyGenConfig {
     }
 
     /**
-     * Maximum text buffer size before forcing flush
+     * Maximum text buffer size before forcing flush (chars)
+     * Set high enough to hold complete sentences
+     * LiveAvatar works best with full sentences for smooth TTS
      */
-    public static final int MAX_BUFFER_SIZE = 500;
+    public static final int MAX_BUFFER_SIZE = 400;
 
     /**
      * Maximum time to wait before forcing buffer flush (ms)
+     * Only used for subsequent flushes (first flush has its own timeout)
+     * Balance: Higher = smoother speech, Lower = faster response
      */
-    public static final int MAX_BUFFER_DELAY_MS = 1000;
+    public static final int MAX_BUFFER_DELAY_MS = 1500;
 
     /**
      * Retry count for failed API calls
