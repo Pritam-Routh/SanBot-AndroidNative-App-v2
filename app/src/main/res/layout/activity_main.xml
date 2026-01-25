@@ -67,6 +67,64 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
+    <!-- HeyGen Avatar Video Container - FULL SCREEN -->
+    <FrameLayout
+        android:id="@+id/avatarContainer"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:visibility="gone"
+        android:background="@android:color/black"
+        android:elevation="10dp"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <!-- Avatar Video Surface -->
+        <io.livekit.android.renderer.SurfaceViewRenderer
+            android:id="@+id/avatarVideoView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:layout_gravity="center" />
+
+        <!-- Avatar Loading Indicator -->
+        <ProgressBar
+            android:id="@+id/avatarLoading"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_gravity="center"
+            android:visibility="gone"
+            android:indeterminateTint="@color/accent" />
+
+        <!-- Avatar Error/Fallback Overlay -->
+        <LinearLayout
+            android:id="@+id/avatarErrorOverlay"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:layout_gravity="center"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:visibility="gone"
+            android:background="@color/background_dark">
+
+            <ImageView
+                android:layout_width="64dp"
+                android:layout_height="64dp"
+                android:src="@drawable/ic_avatar_fallback"
+                android:contentDescription="Avatar unavailable" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="Avatar unavailable"
+                android:textColor="@color/text_secondary"
+                android:textSize="14sp" />
+
+        </LinearLayout>
+
+    </FrameLayout>
+
     <!-- Status Text (Listening..., Connecting..., etc.) -->
     <TextView
         android:id="@+id/statusText"

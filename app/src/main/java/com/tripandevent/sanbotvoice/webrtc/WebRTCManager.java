@@ -64,7 +64,8 @@ public class WebRTCManager {
     private DataChannel dataChannel;
     private AudioSource audioSource;
     private AudioTrack localAudioTrack;
-    
+    private AudioTrack remoteAudioTrack;
+
     // State
     private final AtomicBoolean isConnected = new AtomicBoolean(false);
     private final AtomicBoolean isConnecting = new AtomicBoolean(false);
@@ -558,6 +559,17 @@ public class WebRTCManager {
             Logger.d(TAG, "Microphone %s", muted ? "muted" : "unmuted");
         }
     }
+
+    /**
+     * Mute/unmute remote audio (OpenAI output)
+     * Use this when LiveAvatar is handling audio playback to prevent double audio
+     */
+    public void setRemoteAudioMuted(boolean muted) {
+        if (remoteAudioTrack != null) {
+            remoteAudioTrack.setEnabled(!muted);
+            Logger.d(TAG, "Remote audio %s", muted ? "muted" : "unmuted");
+        }
+    }
     
     /**
      * Check if connected
@@ -699,14 +711,15 @@ public class WebRTCManager {
         @Override
         public void onAddTrack(RtpReceiver receiver, MediaStream[] streams) {
             Logger.d(TAG, "Remote track added");
-            
+
             if (receiver.track() instanceof AudioTrack) {
-                AudioTrack remoteAudioTrack = (AudioTrack) receiver.track();
-                remoteAudioTrack.setEnabled(true);
-                
+                AudioTrack track = (AudioTrack) receiver.track();
+                remoteAudioTrack = track;  // Store reference for muting
+                track.setEnabled(true);
+
                 mainHandler.post(() -> {
                     if (callback != null) {
-                        callback.onRemoteAudioTrack(remoteAudioTrack);
+                        callback.onRemoteAudioTrack(track);
                     }
                 });
             }

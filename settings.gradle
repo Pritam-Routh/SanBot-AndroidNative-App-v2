@@ -11,6 +11,8 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // JitPack for LiveKit SDK transitive dependencies (audioswitch)
+        maven { url 'https://jitpack.io' }
         // Sanbot SDK local libs - uses flatDir in app/build.gradle instead
     }
 }

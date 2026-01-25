@@ -10,7 +10,10 @@ import android.os.Bundle;
 import android.os.IBinder;
 import android.view.View;
 import android.view.WindowManager;
+import android.widget.FrameLayout;
 import android.widget.ImageButton;
+import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -24,8 +27,16 @@ import androidx.core.view.WindowInsetsControllerCompat;
 import com.tripandevent.sanbotvoice.config.AgentConfig;
 import com.tripandevent.sanbotvoice.core.ConversationState;
 import com.tripandevent.sanbotvoice.core.VoiceAgentService;
+import com.tripandevent.sanbotvoice.heygen.HeyGenConfig;
+import com.tripandevent.sanbotvoice.heygen.HeyGenSessionManager;
+import com.tripandevent.sanbotvoice.heygen.HeyGenVideoManager;
+import com.tripandevent.sanbotvoice.liveavatar.LiveAvatarConfig;
+import com.tripandevent.sanbotvoice.liveavatar.LiveAvatarSessionManager;
+import com.tripandevent.sanbotvoice.ui.AvatarViewController;
 import com.tripandevent.sanbotvoice.ui.views.VoiceOrbView;
 import com.tripandevent.sanbotvoice.utils.Logger;
+
+import io.livekit.android.renderer.SurfaceViewRenderer;
 
 public class MainActivity extends AppCompatActivity implements VoiceAgentService.VoiceAgentListener {
 
@@ -40,6 +51,13 @@ public class MainActivity extends AppCompatActivity implements VoiceAgentService
     private TextView speakerText;
     private TextView statsText;
     private VoiceOrbView voiceOrb;
+
+    // Avatar UI components
+    private FrameLayout avatarContainer;
+    private SurfaceViewRenderer avatarVideoView;
+    private ProgressBar avatarLoading;
+    private LinearLayout avatarErrorOverlay;
+    private AvatarViewController avatarViewController;
 
     // Service connection
     private VoiceAgentService voiceService;
@@ -117,6 +135,28 @@ public class MainActivity extends AppCompatActivity implements VoiceAgentService
 
         if (statsText != null) {
             statsText.setVisibility(View.GONE);
+        }
+
+        // Initialize avatar UI components if any avatar provider is enabled
+        if (HeyGenConfig.isEnabled() || LiveAvatarConfig.isEnabled()) {
+            initializeAvatarViews();
+        }
+    }
+
+    private void initializeAvatarViews() {
+        avatarContainer = findViewById(R.id.avatarContainer);
+        avatarVideoView = findViewById(R.id.avatarVideoView);
+        avatarLoading = findViewById(R.id.avatarLoading);
+        avatarErrorOverlay = findViewById(R.id.avatarErrorOverlay);
+
+        if (avatarContainer != null && avatarVideoView != null && avatarLoading != null) {
+            avatarViewController = new AvatarViewController(
+                    avatarContainer,
+                    avatarVideoView,
+                    avatarLoading,
+                    avatarErrorOverlay
+            );
+            Logger.d(TAG, "Avatar views initialized");
         }
     }
     
@@ -241,20 +281,7 @@ public class MainActivity extends AppCompatActivity implements VoiceAgentService
         voiceService.setAiInstructions(customInstructions);
         */
     }
-    
-    @Override
-    protected void onDestroy() {
-        super.onDestroy();
-        
-        if (isServiceBound) {
-            if (voiceService != null) {
-                voiceService.setListener(null);
-            }
-            unbindService(serviceConnection);
-            isServiceBound = false;
-        }
-    }
-    
+
     // ============================================
     // VoiceAgentService.VoiceAgentListener
     // ============================================
@@ -304,12 +331,75 @@ public class MainActivity extends AppCompatActivity implements VoiceAgentService
             }
         });
     }
+
+    @Override
+    public void onAvatarVideoReady() {
+        runOnUiThread(() -> {
+            Logger.i(TAG, "*** AVATAR VIDEO READY *** isConversationActive=%b", isConversationActive);
+            if (voiceService != null) {
+                Logger.i(TAG, "Current conversation state: %s", voiceService.getCurrentState());
+            }
+
+            if (avatarViewController != null && voiceService != null) {
+                // Check which avatar provider is active and bind accordingly
+
+                // Try LiveAvatar first (if enabled, it takes priority)
+                if (voiceService.isLiveAvatarEnabled()) {
+                    LiveAvatarSessionManager liveAvatarManager = voiceService.getLiveAvatarSessionManager();
+                    if (liveAvatarManager != null) {
+                        Logger.d(TAG, "LiveAvatar session state: %s", liveAvatarManager.getState());
+                        avatarViewController.bindLiveAvatarManager(liveAvatarManager);
+                        avatarViewController.showVideo();
+                        Logger.i(TAG, "LiveAvatar video shown successfully");
+                        return;
+                    } else {
+                        Logger.e(TAG, "LiveAvatarSessionManager is null!");
+                    }
+                }
+
+                // Fall back to HeyGen if enabled
+                if (voiceService.isHeyGenEnabled()) {
+                    HeyGenSessionManager sessionManager = voiceService.getHeyGenSessionManager();
+                    if (sessionManager != null) {
+                        Logger.d(TAG, "HeyGen session state: %s", sessionManager.getState());
+                        HeyGenVideoManager videoManager = sessionManager.getVideoManager();
+                        if (videoManager != null) {
+                            Logger.d(TAG, "VideoManager connected: %s, hasTrack: %s",
+                                    videoManager.isConnected(), videoManager.hasVideoTrack());
+                            avatarViewController.bindVideoManager(videoManager);
+                            avatarViewController.showVideo();
+                            Logger.i(TAG, "HeyGen avatar video shown successfully");
+                        } else {
+                            Logger.e(TAG, "HeyGen VideoManager is null!");
+                        }
+                    } else {
+                        Logger.e(TAG, "HeyGen SessionManager is null!");
+                    }
+                }
+            }
+        });
+    }
+
+    @Override
+    public void onAvatarError(String error) {
+        runOnUiThread(() -> {
+            Logger.e(TAG, "Avatar error: %s", error);
+            if (avatarViewController != null) {
+                avatarViewController.showError();
+            }
+            // Optionally show a toast, but don't disrupt the conversation
+            // Toast.makeText(this, "Avatar unavailable: " + error, Toast.LENGTH_SHORT).show();
+        });
+    }
     
     // ============================================
     // UI update helpers
     // ============================================
     
     private void updateUIForState(ConversationState state) {
+        // Update avatar visibility based on state
+        updateAvatarForState(state);
+
         switch (state) {
             case IDLE:
                 statusText.setText("Ready");
@@ -391,5 +481,76 @@ public class MainActivity extends AppCompatActivity implements VoiceAgentService
                 break;
         }
     }
-    
+
+    /**
+     * Update avatar UI based on conversation state
+     */
+    private void updateAvatarForState(ConversationState state) {
+        if (avatarViewController == null) return;
+
+        Logger.d(TAG, "updateAvatarForState: %s, avatarVisible=%b, avatarVideoReady=%b",
+                state, avatarViewController.isVisible(), avatarViewController.isVideoReady());
+
+        switch (state) {
+            case CONNECTING:
+            case CONFIGURING:
+                // Show avatar loading when connecting (for any avatar provider)
+                if (voiceService != null && voiceService.isAnyAvatarEnabled()) {
+                    avatarViewController.showLoading();
+                }
+                break;
+
+            case IDLE:
+            case DISCONNECTING:
+            case ERROR:
+                // Only hide avatar if no avatar session is active
+                // This prevents premature hiding while video is still playing
+                if (voiceService != null) {
+                    // Check LiveAvatar first (takes priority)
+                    if (voiceService.isLiveAvatarEnabled()) {
+                        LiveAvatarSessionManager liveAvatarManager = voiceService.getLiveAvatarSessionManager();
+                        if (liveAvatarManager != null && liveAvatarManager.isActive()) {
+                            Logger.d(TAG, "Keeping avatar visible - LiveAvatar session still active");
+                            break;
+                        }
+                    }
+
+                    // Check HeyGen
+                    if (voiceService.isHeyGenEnabled()) {
+                        HeyGenSessionManager sessionManager = voiceService.getHeyGenSessionManager();
+                        if (sessionManager != null && sessionManager.isActive()) {
+                            Logger.d(TAG, "Keeping avatar visible - HeyGen session still active");
+                            break;
+                        }
+                    }
+                }
+                Logger.d(TAG, "Hiding avatar - conversation state: %s", state);
+                avatarViewController.hide();
+                break;
+
+            // For other states (READY, LISTENING, PROCESSING, SPEAKING, EXECUTING_FUNCTION)
+            // the avatar remains visible if already showing
+            default:
+                break;
+        }
+    }
+
+    @Override
+    protected void onDestroy() {
+        // Release avatar resources before calling super
+        if (avatarViewController != null) {
+            avatarViewController.release();
+        }
+
+        super.onDestroy();
+
+        if (isServiceBound) {
+            if (voiceService != null) {
+                voiceService.setListener(null);
+            }
+            unbindService(serviceConnection);
+            isServiceBound = false;
+        }
+    }
+
 }

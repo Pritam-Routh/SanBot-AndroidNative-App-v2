@@ -135,6 +135,12 @@ public class ClientEvents {
         outputFormat.addProperty("rate", config.sampleRate);
         output.add("format", outputFormat);
         output.addProperty("voice", config.voice);
+
+        // Enable output transcription for LiveAvatar lip sync
+        JsonObject outputTranscription = new JsonObject();
+        outputTranscription.addProperty("model", "whisper-1");
+        output.add("transcription", outputTranscription);
+
         audio.add("output", output);
 
         session.add("audio", audio);
@@ -211,6 +217,12 @@ public class ClientEvents {
         outputFormat.addProperty("rate", 24000);
         output.add("format", outputFormat);
         output.addProperty("voice", "alloy");
+
+        // Enable output transcription for LiveAvatar lip sync
+        JsonObject outputTranscription = new JsonObject();
+        outputTranscription.addProperty("model", "whisper-1");
+        output.add("transcription", outputTranscription);
+
         audio.add("output", output);
 
         session.add("audio", audio);

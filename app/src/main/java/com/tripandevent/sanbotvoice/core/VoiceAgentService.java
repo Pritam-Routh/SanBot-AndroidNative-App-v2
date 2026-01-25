@@ -29,6 +29,12 @@ import com.tripandevent.sanbotvoice.sanbot.SanbotMotionManager;
 import com.tripandevent.sanbotvoice.utils.Constants;
 import com.tripandevent.sanbotvoice.utils.Logger;
 import com.tripandevent.sanbotvoice.webrtc.WebRTCManager;
+import com.tripandevent.sanbotvoice.heygen.HeyGenConfig;
+import com.tripandevent.sanbotvoice.heygen.HeyGenSessionManager;
+import com.tripandevent.sanbotvoice.heygen.HeyGenVideoManager;
+import com.tripandevent.sanbotvoice.liveavatar.LiveAvatarConfig;
+import com.tripandevent.sanbotvoice.liveavatar.LiveAvatarSessionManager;
+import com.tripandevent.sanbotvoice.liveavatar.AudioDeltaBuffer;
 
 import org.webrtc.AudioTrack;
 
@@ -53,7 +59,15 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
     private SpeakerIdentifier speakerIdentifier;
     private ConversationAnalytics analytics;
     private SanbotMotionManager sanbotMotionManager;
-    
+
+    // HeyGen Avatar components
+    private HeyGenSessionManager heyGenSessionManager;
+    private boolean heyGenEnabled = false;
+
+    // LiveAvatar components (Audio-based streaming for lowest latency)
+    private LiveAvatarSessionManager liveAvatarSessionManager;
+    private boolean liveAvatarEnabled = false;
+
     // State
     private ConversationState currentState = ConversationState.IDLE;
     private VoiceAgentListener listener;
@@ -82,6 +96,10 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
         void onError(String error);
         void onAudioLevel(float level);
         void onSpeakerIdentified(String speakerName, float confidence);
+
+        // HeyGen Avatar callbacks
+        default void onAvatarVideoReady() {}
+        default void onAvatarError(String error) {}
     }
     
     public class LocalBinder extends Binder {
@@ -122,6 +140,14 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
                         sanbotMotionManager.showListening();
                     }
                 }
+
+                // Interrupt avatar when user starts speaking (barge-in)
+                if (heyGenEnabled && heyGenSessionManager != null && heyGenSessionManager.isReady()) {
+                    heyGenSessionManager.interrupt();
+                }
+                if (liveAvatarEnabled && liveAvatarSessionManager != null && liveAvatarSessionManager.isConnected()) {
+                    liveAvatarSessionManager.interrupt();
+                }
             }
             
             @Override
@@ -154,10 +180,145 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
         
         // Initialize analytics
         analytics = new ConversationAnalytics(this);
-        
+
+        // Initialize HeyGen if enabled
+        initializeHeyGen();
+
+        // Initialize LiveAvatar if enabled (takes precedence over HeyGen if both enabled)
+        initializeLiveAvatar();
+
         createNotificationChannel();
     }
-    
+
+    /**
+     * Initialize HeyGen avatar support
+     */
+    private void initializeHeyGen() {
+        if (!HeyGenConfig.isEnabled()) {
+            Logger.d(TAG, "HeyGen avatar is disabled");
+            heyGenEnabled = false;
+            return;
+        }
+
+        heyGenEnabled = true;
+        heyGenSessionManager = new HeyGenSessionManager();
+        heyGenSessionManager.setContext(this);
+        heyGenSessionManager.setListener(new HeyGenSessionManager.SessionListener() {
+            @Override
+            public void onSessionCreated(String sessionId) {
+                Logger.d(TAG, "HeyGen session created: %s", sessionId);
+            }
+
+            @Override
+            public void onSessionConnected() {
+                Logger.i(TAG, "HeyGen avatar connected");
+            }
+
+            @Override
+            public void onSessionError(String error) {
+                Logger.e(TAG, "HeyGen avatar error: %s", error);
+                heyGenEnabled = false;
+                if (listener != null) {
+                    listener.onAvatarError(error);
+                }
+            }
+
+            @Override
+            public void onSessionStopped() {
+                Logger.d(TAG, "HeyGen session stopped");
+            }
+
+            @Override
+            public void onVideoTrackReady() {
+                Logger.i(TAG, "HeyGen video track ready");
+                if (listener != null) {
+                    listener.onAvatarVideoReady();
+                }
+            }
+        });
+
+        Logger.i(TAG, "HeyGen avatar support initialized");
+    }
+
+    /**
+     * Initialize LiveAvatar support (Audio-based streaming for lowest latency)
+     *
+     * If LiveAvatar is enabled, it takes precedence over HeyGen for avatar streaming.
+     * LiveAvatar uses direct audio streaming from OpenAI, bypassing text-to-speech
+     * for the lowest possible latency (~200-400ms vs ~500-800ms with text).
+     */
+    private void initializeLiveAvatar() {
+        if (!LiveAvatarConfig.isEnabled()) {
+            Logger.d(TAG, "LiveAvatar is disabled");
+            liveAvatarEnabled = false;
+            return;
+        }
+
+        // If LiveAvatar is enabled, disable HeyGen to avoid conflicts
+        if (heyGenEnabled) {
+            Logger.i(TAG, "LiveAvatar enabled - disabling HeyGen to avoid conflicts");
+            heyGenEnabled = false;
+            if (heyGenSessionManager != null) {
+                heyGenSessionManager.destroy();
+                heyGenSessionManager = null;
+            }
+        }
+
+        liveAvatarEnabled = true;
+        liveAvatarSessionManager = new LiveAvatarSessionManager(this);
+        liveAvatarSessionManager.setListener(new LiveAvatarSessionManager.SessionListener() {
+            @Override
+            public void onStateChanged(LiveAvatarSessionManager.SessionState state) {
+                Logger.d(TAG, "LiveAvatar state: %s", state);
+            }
+
+            @Override
+            public void onStreamReady() {
+                Logger.i(TAG, "LiveAvatar stream ready");
+                if (listener != null) {
+                    listener.onAvatarVideoReady();
+                }
+            }
+
+            @Override
+            public void onConnectionQualityChanged(LiveAvatarSessionManager.ConnectionQuality quality) {
+                Logger.d(TAG, "LiveAvatar connection quality: %s", quality);
+            }
+
+            @Override
+            public void onUserTranscription(String text) {
+                Logger.d(TAG, "LiveAvatar user transcription: %s", text);
+            }
+
+            @Override
+            public void onAvatarTranscription(String text) {
+                Logger.d(TAG, "LiveAvatar avatar transcription: %s", text);
+            }
+
+            @Override
+            public void onAvatarSpeakStarted() {
+                Logger.d(TAG, "LiveAvatar speak started");
+            }
+
+            @Override
+            public void onAvatarSpeakEnded() {
+                Logger.d(TAG, "LiveAvatar speak ended");
+            }
+
+            @Override
+            public void onError(String error) {
+                Logger.e(TAG, "LiveAvatar error: %s", error);
+                liveAvatarEnabled = false;
+                if (listener != null) {
+                    listener.onAvatarError(error);
+                }
+            }
+        });
+
+        Logger.i(TAG, "LiveAvatar support initialized (audio streaming: %b)",
+            LiveAvatarConfig.useAudioStreaming());
+    }
+
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         Logger.d(TAG, "Service started");
@@ -195,7 +356,19 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
         if (sanbotMotionManager != null) {
             sanbotMotionManager.release();
         }
-        
+
+        // Cleanup HeyGen
+        if (heyGenSessionManager != null) {
+            heyGenSessionManager.destroy();
+            heyGenSessionManager = null;
+        }
+
+        // Cleanup LiveAvatar
+        if (liveAvatarSessionManager != null) {
+            liveAvatarSessionManager.destroy();
+            liveAvatarSessionManager = null;
+        }
+
         super.onDestroy();
     }
     
@@ -261,7 +434,42 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
     public SanbotMotionManager getSanbotMotionManager() {
         return sanbotMotionManager;
     }
-    
+
+    /**
+     * Get the HeyGen session manager for UI binding
+     */
+    public HeyGenSessionManager getHeyGenSessionManager() {
+        return heyGenSessionManager;
+    }
+
+    /**
+     * Check if HeyGen avatar is enabled and active
+     */
+    public boolean isHeyGenEnabled() {
+        return heyGenEnabled && heyGenSessionManager != null;
+    }
+
+    /**
+     * Get the LiveAvatar session manager for UI binding
+     */
+    public LiveAvatarSessionManager getLiveAvatarSessionManager() {
+        return liveAvatarSessionManager;
+    }
+
+    /**
+     * Check if LiveAvatar is enabled and active
+     */
+    public boolean isLiveAvatarEnabled() {
+        return liveAvatarEnabled && liveAvatarSessionManager != null;
+    }
+
+    /**
+     * Check if any avatar (HeyGen or LiveAvatar) is enabled
+     */
+    public boolean isAnyAvatarEnabled() {
+        return isHeyGenEnabled() || isLiveAvatarEnabled();
+    }
+
     public void startConversation() {
         if (currentState != ConversationState.IDLE && currentState != ConversationState.ERROR) {
             Logger.w(TAG, "Cannot start conversation in state: %s", currentState);
@@ -286,19 +494,29 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
         if (currentState == ConversationState.IDLE) {
             return;
         }
-        
+
         Logger.i(TAG, "Stopping conversation...");
-        
+
+        // Stop HeyGen avatar session
+        if (heyGenSessionManager != null) {
+            heyGenSessionManager.stopSession();
+        }
+
+        // Stop LiveAvatar session
+        if (liveAvatarSessionManager != null) {
+            liveAvatarSessionManager.stopSession();
+        }
+
         // Say goodbye gesture
         if (sanbotMotionManager != null && sanbotMotionManager.isAvailable()) {
             sanbotMotionManager.sayGoodbye();
         }
-        
+
         ConversationAnalytics.SessionSummary summary = analytics.endSession();
         if (summary != null) {
             Logger.i(TAG, "Session summary: %s", summary.toString());
         }
-        
+
         webRTCManager.disconnect();
         
         if (audioProcessor != null) {
@@ -382,17 +600,29 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
     public void onConnected() {
         Logger.i(TAG, "WebRTC connected");
         setState(ConversationState.CONFIGURING);
-        
+
         // Configure audio for maximum volume
         if (audioBooster != null) {
             audioBooster.configureForMaxVolume();
             Logger.i(TAG, "Audio configured: %s", audioBooster.getVolumeInfo());
         }
-        
+
         if (audioProcessor != null) {
             audioProcessor.initialize(0);
         }
-        
+
+        // Start HeyGen avatar session (runs in parallel with OpenAI session config)
+        if (heyGenEnabled && heyGenSessionManager != null) {
+            Logger.d(TAG, "Starting HeyGen avatar session...");
+            heyGenSessionManager.startSession(HeyGenConfig.getAvatarId());
+        }
+
+        // Start LiveAvatar session (runs in parallel with OpenAI session config)
+        if (liveAvatarEnabled && liveAvatarSessionManager != null) {
+            Logger.d(TAG, "Starting LiveAvatar session...");
+            liveAvatarSessionManager.startSession(LiveAvatarConfig.getAvatarId());
+        }
+
         // Send session configuration with robot motion tools
         configureSession();
     }
@@ -469,7 +699,7 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
     @Override
     public void onServerEvent(ServerEvents.ParsedEvent event) {
         Logger.d(TAG, "Server event: %s", event.type);
-        
+
         if (event.isSessionCreated()) {
             handleSessionCreated(event);
         } else if (event.isSessionUpdated()) {
@@ -479,6 +709,12 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
             setState(ConversationState.LISTENING);
         } else if (event.isSpeechStopped()) {
             setState(ConversationState.PROCESSING);
+        } else if (event.isAudioDelta()) {
+            // LOWEST LATENCY: Stream audio directly to LiveAvatar
+            handleAudioDelta(event);
+        } else if (event.isAudioDone()) {
+            // Complete audio streaming to LiveAvatar
+            handleAudioDone(event);
         } else if (event.isTranscriptDelta()) {
             handleTranscriptDelta(event);
         } else if (event.isTranscriptDone()) {
@@ -491,12 +727,61 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
             handleServerError(event);
         }
     }
+
+    /**
+     * Handle audio delta from OpenAI - stream directly to LiveAvatar for lowest latency
+     */
+    private void handleAudioDelta(ServerEvents.ParsedEvent event) {
+        String audioDelta = event.getAudioDelta();
+        if (audioDelta == null || audioDelta.isEmpty()) {
+            return;
+        }
+
+        // Debug: Log LiveAvatar state
+        boolean connected = liveAvatarSessionManager != null && liveAvatarSessionManager.isConnected();
+        boolean useAudio = LiveAvatarConfig.useAudioStreaming();
+        Logger.d(TAG, "AudioDelta: liveAvatarEnabled=%b, connected=%b, useAudioStreaming=%b",
+                liveAvatarEnabled, connected, useAudio);
+
+        // Stream audio delta to LiveAvatar if enabled and using audio streaming mode
+        if (liveAvatarEnabled && liveAvatarSessionManager != null &&
+            liveAvatarSessionManager.isConnected() && LiveAvatarConfig.useAudioStreaming()) {
+            // Get the audio buffer and add the delta for streaming
+            AudioDeltaBuffer audioBuffer = liveAvatarSessionManager.getAudioDeltaBuffer();
+            if (audioBuffer != null) {
+                audioBuffer.addAudioDelta(audioDelta);
+                Logger.d(TAG, "Audio delta sent to LiveAvatar buffer");
+            }
+        }
+    }
+
+    /**
+     * Handle audio done from OpenAI - complete the audio stream to LiveAvatar
+     */
+    private void handleAudioDone(ServerEvents.ParsedEvent event) {
+        // Complete audio streaming to LiveAvatar
+        if (liveAvatarEnabled && liveAvatarSessionManager != null &&
+            liveAvatarSessionManager.isConnected() && LiveAvatarConfig.useAudioStreaming()) {
+            AudioDeltaBuffer audioBuffer = liveAvatarSessionManager.getAudioDeltaBuffer();
+            if (audioBuffer != null) {
+                audioBuffer.complete();
+            }
+        }
+    }
     
     @Override
     public void onSpeechStarted() {
         Logger.d(TAG, "Speech input started");
         setState(ConversationState.LISTENING);
-        
+
+        // Interrupt avatar when user starts speaking (barge-in)
+        if (heyGenEnabled && heyGenSessionManager != null && heyGenSessionManager.isReady()) {
+            heyGenSessionManager.interrupt();
+        }
+        if (liveAvatarEnabled && liveAvatarSessionManager != null && liveAvatarSessionManager.isConnected()) {
+            liveAvatarSessionManager.interrupt();
+        }
+
         if (analytics != null) {
             analytics.recordUserMessage();
         }
@@ -512,11 +797,21 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
     public void onRemoteAudioTrack(AudioTrack track) {
         Logger.d(TAG, "Remote audio track received - AI is speaking");
         setState(ConversationState.SPEAKING);
-        
-        // Ensure audio is boosted when AI starts speaking
-        if (audioBooster != null && !audioBooster.isConfigured()) {
-            audioBooster.configureForMaxVolume();
-            Logger.i(TAG, "Audio boosted for AI speech: %s", audioBooster.getVolumeInfo());
+
+        // When LiveAvatar is enabled, mute OpenAI's WebRTC audio
+        // LiveAvatar will play audio from its own TTS (perfect audio-visual sync)
+        if (liveAvatarEnabled && liveAvatarSessionManager != null && liveAvatarSessionManager.isConnected()) {
+            Logger.i(TAG, "Muting OpenAI audio - LiveAvatar will handle audio playback");
+            webRTCManager.setRemoteAudioMuted(true);
+            // Enable text buffer for lip sync
+            liveAvatarSessionManager.enableTextBuffer();
+        } else {
+            // No avatar - let OpenAI audio play directly
+            // Ensure audio is boosted when AI starts speaking
+            if (audioBooster != null && !audioBooster.isConfigured()) {
+                audioBooster.configureForMaxVolume();
+                Logger.i(TAG, "Audio boosted for AI speech: %s", audioBooster.getVolumeInfo());
+            }
         }
     }
     
@@ -527,8 +822,22 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
     private void setState(ConversationState newState) {
         if (currentState != newState) {
             Logger.d(TAG, "State: %s -> %s", currentState, newState);
+
+            // Debug: Log stack trace for IDLE/ERROR transitions to understand cause
+            if (newState == ConversationState.IDLE || newState == ConversationState.ERROR) {
+                Logger.w(TAG, "*** STATE CHANGING TO %s *** Logging call stack:", newState);
+                StackTraceElement[] stackTrace = Thread.currentThread().getStackTrace();
+                for (int i = 2; i < Math.min(10, stackTrace.length); i++) {
+                    Logger.w(TAG, "  at %s.%s(%s:%d)",
+                        stackTrace[i].getClassName(),
+                        stackTrace[i].getMethodName(),
+                        stackTrace[i].getFileName(),
+                        stackTrace[i].getLineNumber());
+                }
+            }
+
             currentState = newState;
-            
+
             if (listener != null) {
                 listener.onStateChanged(newState);
             }
@@ -553,9 +862,20 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
         String delta = event.getTranscriptDelta();
         if (delta != null && !delta.isEmpty()) {
             currentTranscript.append(delta);
-            
+
             if (listener != null) {
                 listener.onTranscript(currentTranscript.toString(), false);
+            }
+
+            // Forward text delta to HeyGen avatar for lip-sync
+            if (heyGenEnabled && heyGenSessionManager != null && heyGenSessionManager.isReady()) {
+                heyGenSessionManager.addTextDelta(delta);
+            }
+
+            // Forward text delta to LiveAvatar for TTS and lip-sync
+            // In WebRTC mode, audio deltas are not available, so we use text-based TTS
+            if (liveAvatarEnabled && liveAvatarSessionManager != null && liveAvatarSessionManager.isConnected()) {
+                liveAvatarSessionManager.addTextDelta(delta);
             }
         }
     }
@@ -581,13 +901,30 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
     
     private void handleResponseDone(ServerEvents.ParsedEvent event) {
         Logger.d(TAG, "Response complete");
-        
+
+        // Flush any remaining text to HeyGen avatar
+        if (heyGenEnabled && heyGenSessionManager != null) {
+            heyGenSessionManager.flushBuffer();
+        }
+
+        // Complete any remaining audio/text to LiveAvatar
+        if (liveAvatarEnabled && liveAvatarSessionManager != null && liveAvatarSessionManager.isConnected()) {
+            // Flush text buffer for TTS-based lip sync
+            liveAvatarSessionManager.flushTextBuffer();
+
+            // Also complete audio buffer if it was streaming
+            AudioDeltaBuffer audioBuffer = liveAvatarSessionManager.getAudioDeltaBuffer();
+            if (audioBuffer != null && audioBuffer.isStreaming()) {
+                audioBuffer.complete();
+            }
+        }
+
         ServerEvents.ResponseInfo responseInfo = event.getResponseInfo();
         if (responseInfo != null && responseInfo.hasFunctionCall()) {
             handleFunctionCallFromResponse(event);
         }
-        
-        if (currentState == ConversationState.SPEAKING || 
+
+        if (currentState == ConversationState.SPEAKING ||
             currentState == ConversationState.EXECUTING_FUNCTION) {
             setState(ConversationState.READY);
         }

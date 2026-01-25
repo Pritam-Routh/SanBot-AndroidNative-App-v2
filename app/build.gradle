@@ -23,6 +23,17 @@ android {
         buildConfigField "String", "OPENAI_VOICE", "\"${project.findProperty('OPENAI_VOICE') ?: 'marin'}\""
         buildConfigField "boolean", "ENABLE_TRANSCRIPT_DISPLAY", "${project.findProperty('ENABLE_TRANSCRIPT_DISPLAY') ?: 'true'}"
         buildConfigField "boolean", "ENABLE_DEBUG_LOGGING", "${project.findProperty('ENABLE_DEBUG_LOGGING') ?: 'false'}"
+
+        // HeyGen Avatar Configuration (disabled - using LiveAvatar instead)
+        buildConfigField "boolean", "ENABLE_HEYGEN_AVATAR", "${project.findProperty('ENABLE_HEYGEN_AVATAR') ?: 'false'}"
+        buildConfigField "String", "HEYGEN_AVATAR_ID", "\"${project.findProperty('HEYGEN_AVATAR_ID') ?: ''}\""
+        buildConfigField "int", "TEXT_DELTA_BATCH_DELAY_MS", "${project.findProperty('TEXT_DELTA_BATCH_DELAY_MS') ?: '300'}"
+        buildConfigField "int", "TEXT_DELTA_MIN_WORDS", "${project.findProperty('TEXT_DELTA_MIN_WORDS') ?: '3'}"
+
+        // LiveAvatar Configuration (Audio-Based Streaming for Lowest Latency)
+        buildConfigField "boolean", "ENABLE_LIVEAVATAR", "${project.findProperty('ENABLE_LIVEAVATAR') ?: 'false'}"
+        buildConfigField "String", "LIVEAVATAR_AVATAR_ID", "\"${project.findProperty('LIVEAVATAR_AVATAR_ID') ?: ''}\""
+        buildConfigField "boolean", "LIVEAVATAR_AUDIO_STREAMING", "${project.findProperty('LIVEAVATAR_AUDIO_STREAMING') ?: 'true'}"
     }
 
     buildTypes {
@@ -102,6 +113,11 @@ dependencies {
     // ============================================
     // Google's WebRTC library for Android
     implementation 'io.getstream:stream-webrtc-android:1.1.0'
+
+    // ============================================
+    // LIVEKIT (for HeyGen/LiveAvatar video streaming)
+    // ============================================
+    implementation 'io.livekit:livekit-android:2.5.0'
     
     // ============================================
     // NETWORKING
