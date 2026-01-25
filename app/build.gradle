@@ -30,10 +30,9 @@ android {
         buildConfigField "int", "TEXT_DELTA_BATCH_DELAY_MS", "${project.findProperty('TEXT_DELTA_BATCH_DELAY_MS') ?: '300'}"
         buildConfigField "int", "TEXT_DELTA_MIN_WORDS", "${project.findProperty('TEXT_DELTA_MIN_WORDS') ?: '3'}"
 
-        // LiveAvatar Configuration (Audio-Based Streaming for Lowest Latency)
+        // LiveAvatar Configuration (Text-Based TTS for Lip Sync)
         buildConfigField "boolean", "ENABLE_LIVEAVATAR", "${project.findProperty('ENABLE_LIVEAVATAR') ?: 'false'}"
         buildConfigField "String", "LIVEAVATAR_AVATAR_ID", "\"${project.findProperty('LIVEAVATAR_AVATAR_ID') ?: ''}\""
-        buildConfigField "boolean", "LIVEAVATAR_AUDIO_STREAMING", "${project.findProperty('LIVEAVATAR_AUDIO_STREAMING') ?: 'true'}"
     }
 
     buildTypes {

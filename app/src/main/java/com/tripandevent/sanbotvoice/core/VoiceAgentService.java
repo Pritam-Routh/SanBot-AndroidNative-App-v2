@@ -34,7 +34,6 @@ import com.tripandevent.sanbotvoice.heygen.HeyGenSessionManager;
 import com.tripandevent.sanbotvoice.heygen.HeyGenVideoManager;
 import com.tripandevent.sanbotvoice.liveavatar.LiveAvatarConfig;
 import com.tripandevent.sanbotvoice.liveavatar.LiveAvatarSessionManager;
-import com.tripandevent.sanbotvoice.liveavatar.AudioDeltaBuffer;
 
 import org.webrtc.AudioTrack;
 
@@ -270,39 +269,19 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
             @Override
             public void onStateChanged(LiveAvatarSessionManager.SessionState state) {
                 Logger.d(TAG, "LiveAvatar state: %s", state);
-                // When LiveAvatar becomes connected, ensure OpenAI audio is muted
-                if (state == LiveAvatarSessionManager.SessionState.CONNECTED) {
-                    Logger.i(TAG, "LiveAvatar CONNECTED - ensuring OpenAI audio is muted");
-                    if (webRTCManager != null) {
-                        webRTCManager.setRemoteAudioMuted(true);
-                    }
-                }
-                // If LiveAvatar disconnects or errors, unmute OpenAI audio
-                if (state == LiveAvatarSessionManager.SessionState.ERROR ||
-                    state == LiveAvatarSessionManager.SessionState.IDLE) {
-                    if (liveAvatarEnabled) {
-                        Logger.i(TAG, "LiveAvatar disconnected - unmuting OpenAI audio");
-                        if (webRTCManager != null) {
-                            webRTCManager.setRemoteAudioMuted(false);
-                        }
-                    }
-                }
+                // OpenAI audio plays directly to speaker - LiveAvatar audio is muted for lip sync only
             }
 
             @Override
             public void onStreamReady() {
-                Logger.i(TAG, "LiveAvatar stream ready - avatar is now ready for lip sync");
+                Logger.i(TAG, "LiveAvatar stream ready - avatar video for lip sync, OpenAI audio to speaker");
                 // Enable text buffer for lip sync now that stream is ready
                 liveAvatarSessionManager.enableTextBuffer();
-                // Ensure OpenAI audio stays muted (avatar will handle audio)
-                if (webRTCManager != null) {
-                    webRTCManager.setRemoteAudioMuted(true);
-                }
-                // Configure audio booster for LiveAvatar TTS playback
-                // LiveKit audio goes through STREAM_MUSIC, so boost that
-                if (audioBooster != null && !audioBooster.isConfigured()) {
-                    audioBooster.configureForMaxVolume();
-                    Logger.i(TAG, "Audio boosted for LiveAvatar: %s", audioBooster.getVolumeInfo());
+                // FORCE reconfigure audio after LiveKit connects
+                // LiveKit may have overridden audio settings, so we need to reapply them
+                if (audioBooster != null) {
+                    audioBooster.forceReconfigure();
+                    Logger.i(TAG, "Audio FORCE reconfigured after LiveKit: %s", audioBooster.getVolumeInfo());
                 }
                 if (listener != null) {
                     listener.onAvatarVideoReady();
@@ -349,8 +328,7 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
             }
         });
 
-        Logger.i(TAG, "LiveAvatar support initialized (audio streaming: %b)",
-            LiveAvatarConfig.useAudioStreaming());
+        Logger.i(TAG, "LiveAvatar support initialized (text-based TTS mode)");
     }
 
     @Override
@@ -743,12 +721,6 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
             setState(ConversationState.LISTENING);
         } else if (event.isSpeechStopped()) {
             setState(ConversationState.PROCESSING);
-        } else if (event.isAudioDelta()) {
-            // LOWEST LATENCY: Stream audio directly to LiveAvatar
-            handleAudioDelta(event);
-        } else if (event.isAudioDone()) {
-            // Complete audio streaming to LiveAvatar
-            handleAudioDone(event);
         } else if (event.isTranscriptDelta()) {
             handleTranscriptDelta(event);
         } else if (event.isTranscriptDone()) {
@@ -762,47 +734,6 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
         }
     }
 
-    /**
-     * Handle audio delta from OpenAI - stream directly to LiveAvatar for lowest latency
-     */
-    private void handleAudioDelta(ServerEvents.ParsedEvent event) {
-        String audioDelta = event.getAudioDelta();
-        if (audioDelta == null || audioDelta.isEmpty()) {
-            return;
-        }
-
-        // Debug: Log LiveAvatar state
-        boolean connected = liveAvatarSessionManager != null && liveAvatarSessionManager.isConnected();
-        boolean useAudio = LiveAvatarConfig.useAudioStreaming();
-        Logger.d(TAG, "AudioDelta: liveAvatarEnabled=%b, connected=%b, useAudioStreaming=%b",
-                liveAvatarEnabled, connected, useAudio);
-
-        // Stream audio delta to LiveAvatar if enabled and using audio streaming mode
-        if (liveAvatarEnabled && liveAvatarSessionManager != null &&
-            liveAvatarSessionManager.isConnected() && LiveAvatarConfig.useAudioStreaming()) {
-            // Get the audio buffer and add the delta for streaming
-            AudioDeltaBuffer audioBuffer = liveAvatarSessionManager.getAudioDeltaBuffer();
-            if (audioBuffer != null) {
-                audioBuffer.addAudioDelta(audioDelta);
-                Logger.d(TAG, "Audio delta sent to LiveAvatar buffer");
-            }
-        }
-    }
-
-    /**
-     * Handle audio done from OpenAI - complete the audio stream to LiveAvatar
-     */
-    private void handleAudioDone(ServerEvents.ParsedEvent event) {
-        // Complete audio streaming to LiveAvatar
-        if (liveAvatarEnabled && liveAvatarSessionManager != null &&
-            liveAvatarSessionManager.isConnected() && LiveAvatarConfig.useAudioStreaming()) {
-            AudioDeltaBuffer audioBuffer = liveAvatarSessionManager.getAudioDeltaBuffer();
-            if (audioBuffer != null) {
-                audioBuffer.complete();
-            }
-        }
-    }
-    
     @Override
     public void onSpeechStarted() {
         Logger.d(TAG, "Speech input started");
@@ -832,22 +763,22 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
         Logger.d(TAG, "Remote audio track received - AI is speaking");
         setState(ConversationState.SPEAKING);
 
-        // When LiveAvatar is ENABLED (not just connected), mute OpenAI's WebRTC audio
-        // LiveAvatar will play audio from its own TTS (perfect audio-visual sync)
-        // IMPORTANT: Mute immediately when enabled, don't wait for connection
-        // The LiveAvatar session connects asynchronously and audio track arrives before it's ready
-        if (liveAvatarEnabled && liveAvatarSessionManager != null) {
-            Logger.i(TAG, "Muting OpenAI audio - LiveAvatar will handle audio playback");
-            webRTCManager.setRemoteAudioMuted(true);
-            // Enable text buffer for lip sync
-            liveAvatarSessionManager.enableTextBuffer();
-        } else {
-            // No avatar - let OpenAI audio play directly
-            // Ensure audio is boosted when AI starts speaking
-            if (audioBooster != null && !audioBooster.isConfigured()) {
+        // OpenAI audio plays directly to speaker (LiveAvatar audio is muted for lip sync only)
+        // ALWAYS force reconfigure when AI starts speaking (LiveKit may have overridden settings)
+        if (audioBooster != null) {
+            if (liveAvatarEnabled) {
+                // Force reconfigure because LiveKit may have changed audio settings
+                audioBooster.forceReconfigure();
+                Logger.i(TAG, "Audio FORCE reconfigured for AI speech (LiveAvatar active): %s", audioBooster.getVolumeInfo());
+            } else if (!audioBooster.isConfigured()) {
                 audioBooster.configureForMaxVolume();
                 Logger.i(TAG, "Audio boosted for AI speech: %s", audioBooster.getVolumeInfo());
             }
+        }
+
+        // Enable text buffer for lip sync if LiveAvatar is active
+        if (liveAvatarEnabled && liveAvatarSessionManager != null) {
+            liveAvatarSessionManager.enableTextBuffer();
         }
     }
     
@@ -943,16 +874,10 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
             heyGenSessionManager.flushBuffer();
         }
 
-        // Complete any remaining audio/text to LiveAvatar
+        // Complete any remaining text to LiveAvatar
         if (liveAvatarEnabled && liveAvatarSessionManager != null && liveAvatarSessionManager.isConnected()) {
             // Flush text buffer for TTS-based lip sync
             liveAvatarSessionManager.flushTextBuffer();
-
-            // Also complete audio buffer if it was streaming
-            AudioDeltaBuffer audioBuffer = liveAvatarSessionManager.getAudioDeltaBuffer();
-            if (audioBuffer != null && audioBuffer.isStreaming()) {
-                audioBuffer.complete();
-            }
         }
 
         ServerEvents.ResponseInfo responseInfo = event.getResponseInfo();

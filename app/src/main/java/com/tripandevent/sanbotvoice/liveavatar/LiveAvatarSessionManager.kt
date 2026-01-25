@@ -57,13 +57,15 @@ import com.tripandevent.sanbotvoice.heygen.TextDeltaBuffer
  * - REST API: Session lifecycle (start/stop/keep-alive)
  *
  * Supported operations:
- * - repeat(text): Make avatar speak text directly
- * - repeatAudio(pcm): Make avatar speak PCM audio (LOWEST LATENCY)
+ * - repeat(text): Make avatar speak text directly (uses LiveAvatar TTS)
  * - interrupt(): Stop avatar mid-speech (for barge-in)
+ *
+ * Uses text-based TTS mode (FULL mode) where text deltas are sent to
+ * LiveAvatar which generates audio and lip-sync together.
  *
  * Kotlin implementation for LiveKit Android SDK 2.x compatibility.
  */
-class LiveAvatarSessionManager(context: Context) : AudioDeltaBuffer.AudioFlushListener, TextDeltaBuffer.FlushCallback {
+class LiveAvatarSessionManager(context: Context) : TextDeltaBuffer.FlushCallback {
 
     companion object {
         private const val TAG = "LiveAvatarSessionMgr"
@@ -108,7 +110,6 @@ class LiveAvatarSessionManager(context: Context) : AudioDeltaBuffer.AudioFlushLi
 
     private val appContext: Context = context.applicationContext
     private val apiClient: LiveAvatarApiClient = LiveAvatarApiClient.getInstance()
-    private val audioDeltaBuffer: AudioDeltaBuffer = AudioDeltaBuffer()
     private val textDeltaBuffer: TextDeltaBuffer = TextDeltaBuffer()
     private val mainHandler = Handler(Looper.getMainLooper())
     private val webSocketClient = OkHttpClient.Builder().build()
@@ -131,21 +132,6 @@ class LiveAvatarSessionManager(context: Context) : AudioDeltaBuffer.AudioFlushLi
     private var webSocket: WebSocket? = null
     private var webSocketConnected = false
 
-    // Current audio streaming event ID (used to group audio chunks together)
-    private var currentStreamEventId: String? = null
-
-    // Audio chunk counter for debugging
-    private var audioChunkCount = 0
-
-    // Flag to track if we've sent agent.speak_start for current stream
-    private var audioStreamStarted = false
-
-    // Track total audio duration in ms for minimum duration requirement
-    private var audioStreamDurationMs = 0L
-
-    // Minimum audio duration required for lip sync (HeyGen requires ~300-500ms)
-    private val MIN_AUDIO_DURATION_MS = 300L
-
     // UI
     private var videoRenderer: SurfaceViewRenderer? = null
     private var listener: SessionListener? = null
@@ -159,7 +145,6 @@ class LiveAvatarSessionManager(context: Context) : AudioDeltaBuffer.AudioFlushLi
     private var keepAliveRunnable: Runnable? = null
 
     init {
-        audioDeltaBuffer.setListener(this)
         textDeltaBuffer.setCallback(this)
     }
 
@@ -269,8 +254,6 @@ class LiveAvatarSessionManager(context: Context) : AudioDeltaBuffer.AudioFlushLi
         return currentState == SessionState.CONNECTING || currentState == SessionState.CONNECTED
     }
 
-    fun getAudioDeltaBuffer(): AudioDeltaBuffer = audioDeltaBuffer
-
     // ============================================
     // PUBLIC METHODS - SESSION LIFECYCLE
     // ============================================
@@ -376,9 +359,6 @@ class LiveAvatarSessionManager(context: Context) : AudioDeltaBuffer.AudioFlushLi
         // Stop keep-alive
         stopKeepAlive()
 
-        // Clear audio buffer
-        audioDeltaBuffer.clear()
-
         // Disconnect WebSocket
         webSocket?.close(1000, "Client disconnect")
         webSocket = null
@@ -417,8 +397,8 @@ class LiveAvatarSessionManager(context: Context) : AudioDeltaBuffer.AudioFlushLi
     // ============================================
 
     /**
-     * Make avatar speak text directly (CUSTOM mode)
-     * Uses LiveAvatar's TTS
+     * Make avatar speak text directly
+     * Uses LiveAvatar's TTS for audio generation and lip sync
      *
      * @param text Text for avatar to speak
      */
@@ -428,73 +408,6 @@ class LiveAvatarSessionManager(context: Context) : AudioDeltaBuffer.AudioFlushLi
             return
         }
         sendTextCommand(text)
-    }
-
-    /**
-     * Make avatar speak PCM audio directly (CUSTOM mode)
-     * LOWEST LATENCY OPTION - bypasses TTS completely
-     *
-     * Sends audio chunk via LiveAvatar's WebSocket for lip sync.
-     *
-     * Based on LiveAvatar Web SDK (audio_utils.ts):
-     * - Audio is split into 20ms chunks (960 bytes at 24kHz 16-bit mono)
-     * - Each chunk is sent as base64 encoded string
-     * - Format: {"type": "agent.speak", "event_id": "...", "audio": "base64..."}
-     * - End signal: {"type": "agent.speak_end", "event_id": "..."}
-     *
-     * NOTE: The SDK does NOT use agent.speak_start - chunks are sent directly.
-     *
-     * @param audioBytes Raw PCM bytes (24kHz, 16-bit signed, mono)
-     */
-    fun sendAudioBinary(audioBytes: ByteArray) {
-        if (!isConnected()) {
-            Log.w(TAG, "Cannot sendAudioBinary: not connected")
-            return
-        }
-
-        // Check WebSocket is connected - audio MUST go via WebSocket
-        if (!webSocketConnected) {
-            Log.e(TAG, "*** Cannot send audio: WebSocket not connected! ***")
-            return
-        }
-
-        // Start new event_id if not currently streaming
-        if (currentStreamEventId == null) {
-            currentStreamEventId = UUID.randomUUID().toString()
-            audioChunkCount = 0
-            audioStreamStarted = true  // Mark as started immediately
-            audioStreamDurationMs = 0L
-            Log.i(TAG, "=== NEW AUDIO STREAM === event_id: $currentStreamEventId")
-        }
-
-        val eventId = currentStreamEventId ?: return
-
-        audioChunkCount++
-        // Track duration: each chunk is 20ms (960 bytes at 24kHz 16-bit mono)
-        audioStreamDurationMs += LiveAvatarConfig.AUDIO_CHUNK_DURATION_MS
-
-        try {
-            // Encode audio as base64 for safe JSON transmission
-            // SDK uses base64 string directly without audio_format metadata
-            val base64Audio = android.util.Base64.encodeToString(audioBytes, android.util.Base64.NO_WRAP)
-
-            val command = JSONObject().apply {
-                put("type", "agent.speak")
-                put("event_id", eventId)
-                put("audio", base64Audio)
-            }
-
-            // Log every 10th chunk to avoid log spam (20ms * 10 = 200ms intervals)
-            if (audioChunkCount % 10 == 1) {
-                Log.d(TAG, "Audio chunk #$audioChunkCount (${audioBytes.size} bytes PCM, duration: ${audioStreamDurationMs}ms)")
-            }
-
-            // Send via LiveAvatar's WebSocket
-            sendToLiveAvatarWebSocket(command.toString())
-
-        } catch (e: JSONException) {
-            Log.e(TAG, "Error creating audio chunk JSON", e)
-        }
     }
 
     /**
@@ -512,12 +425,8 @@ class LiveAvatarSessionManager(context: Context) : AudioDeltaBuffer.AudioFlushLi
 
         Log.d(TAG, "Interrupting avatar")
 
-        // Clear any pending audio and text buffers (use interrupt() to reset state)
-        audioDeltaBuffer.clear()
+        // Clear any pending text buffer (use interrupt() to reset state)
         textDeltaBuffer.interrupt()  // Use interrupt() to reset first flush state
-
-        // Reset all audio stream state
-        resetAudioStreamState()
 
         sendInterrupt()
 
@@ -587,22 +496,6 @@ class LiveAvatarSessionManager(context: Context) : AudioDeltaBuffer.AudioFlushLi
         } catch (e: JSONException) {
             Log.e(TAG, "Error creating stop_listening command", e)
         }
-    }
-
-    // ============================================
-    // AudioDeltaBuffer.AudioFlushListener
-    // ============================================
-
-    override fun onAudioChunk(audioBytes: ByteArray) {
-        // Stream audio chunk immediately for lowest latency
-        // Send raw bytes as binary WebSocket frame for proper lip sync
-        sendAudioBinary(audioBytes)
-    }
-
-    override fun onAudioComplete() {
-        Log.d(TAG, "Audio streaming complete")
-        // Send agent.speak_end to finalize the audio stream
-        sendAudioEnd()
     }
 
     // ============================================
@@ -850,7 +743,12 @@ class LiveAvatarSessionManager(context: Context) : AudioDeltaBuffer.AudioFlushLi
         }
 
         remoteAudioTrack = track
-        Log.i(TAG, "Audio track received from LiveAvatar - audio auto-plays via LiveKit subscription")
+
+        // MUTE LiveAvatar audio - OpenAI audio plays directly to speaker
+        // Avatar video is used for lip sync only
+        // Set volume to 0 to mute the audio track
+        track.setVolume(0.0)
+        Log.i(TAG, "Audio track received from LiveAvatar - MUTED (OpenAI audio plays to speaker)")
 
         checkStreamReady()
     }
@@ -1017,89 +915,6 @@ class LiveAvatarSessionManager(context: Context) : AudioDeltaBuffer.AudioFlushLi
     // ============================================
 
     /**
-     * Send audio end signal to LiveAvatar
-     * Format: {"type": "agent.speak_end", "event_id": "..."}
-     *
-     * IMPORTANT:
-     * - Must go via LiveAvatar's WebSocket
-     * - HeyGen requires minimum ~300ms audio before lip sync activates
-     * - If audio is too short, we pad with silence
-     */
-    private fun sendAudioEnd() {
-        val eventId = currentStreamEventId ?: return
-        val totalChunks = audioChunkCount
-        val totalDurationMs = audioStreamDurationMs
-
-        // Check if we even started (no audio was sent)
-        if (!audioStreamStarted) {
-            Log.w(TAG, "Audio end called but no audio was streamed - skipping")
-            resetAudioStreamState()
-            return
-        }
-
-        // CRITICAL: HeyGen requires minimum audio duration for lip sync
-        // If audio is too short, pad with silence to meet minimum
-        if (totalDurationMs < MIN_AUDIO_DURATION_MS) {
-            val paddingNeeded = MIN_AUDIO_DURATION_MS - totalDurationMs
-            val paddingChunks = (paddingNeeded / LiveAvatarConfig.AUDIO_CHUNK_DURATION_MS).toInt() + 1
-            Log.w(TAG, "Audio too short (${totalDurationMs}ms < ${MIN_AUDIO_DURATION_MS}ms) - padding with $paddingChunks silent chunks")
-
-            // Send silent PCM chunks (zeros)
-            val silentChunk = ByteArray(LiveAvatarConfig.BYTES_PER_CHUNK)  // All zeros = silence
-            repeat(paddingChunks) {
-                sendSilentChunk(eventId, silentChunk)
-            }
-        }
-
-        // Reset state BEFORE sending end (in case of reentrant calls)
-        resetAudioStreamState()
-
-        try {
-            val command = JSONObject().apply {
-                put("type", "agent.speak_end")  // HeyGen expects "type"
-                put("event_id", eventId)
-            }
-
-            // CRITICAL: Send via LiveAvatar's WebSocket
-            sendToLiveAvatarWebSocket(command.toString())
-            Log.i(TAG, "=== AUDIO STREAM COMPLETE === event_id: $eventId, total chunks: $totalChunks (${totalDurationMs}ms audio)")
-
-        } catch (e: JSONException) {
-            Log.e(TAG, "Error creating audio end JSON", e)
-        }
-    }
-
-    /**
-     * Send a silent audio chunk (used for padding short audio)
-     */
-    private fun sendSilentChunk(eventId: String, silentChunk: ByteArray) {
-        try {
-            val base64Audio = android.util.Base64.encodeToString(silentChunk, android.util.Base64.NO_WRAP)
-
-            val command = JSONObject().apply {
-                put("type", "agent.speak")
-                put("event_id", eventId)
-                put("audio", base64Audio)
-            }
-
-            sendToLiveAvatarWebSocket(command.toString())
-
-        } catch (e: JSONException) {
-            Log.e(TAG, "Error sending silent chunk", e)
-        }
-    }
-
-    /**
-     * Reset all audio stream state variables
-     */
-    private fun resetAudioStreamState() {
-        currentStreamEventId = null
-        audioChunkCount = 0
-        audioStreamStarted = false
-        audioStreamDurationMs = 0L
-    }
-
-    /**
      * Send interrupt signal to LiveAvatar
      *
      * Stops avatar mid-speech for barge-in support.
@@ -1133,7 +948,7 @@ class LiveAvatarSessionManager(context: Context) : AudioDeltaBuffer.AudioFlushLi
 
     /**
      * Send command to LiveAvatar via its dedicated WebSocket
-     * This is the PRIMARY transport for all avatar commands (audio, interrupt, etc.)
+     * Used for interrupt commands when WebSocket is available
      */
     private fun sendToLiveAvatarWebSocket(json: String) {
         val ws = webSocket
@@ -1186,8 +1001,7 @@ class LiveAvatarSessionManager(context: Context) : AudioDeltaBuffer.AudioFlushLi
      * Send text command to LiveAvatar for TTS + lip sync
      *
      * Based on official LiveAvatar Web SDK (LiveAvatarSession.ts):
-     * - Text commands ALWAYS go via LiveKit data channel with "event_type": "avatar.speak_text"
-     * - WebSocket is ONLY used for audio streaming (CUSTOM mode)
+     * - Text commands go via LiveKit data channel with "event_type": "avatar.speak_text"
      * - Topic: "agent-control"
      *
      * This matches the SDK's repeat() method which uses sendCommandEvent() -> publishData()
@@ -1206,12 +1020,9 @@ class LiveAvatarSessionManager(context: Context) : AudioDeltaBuffer.AudioFlushLi
     /**
      * Send speak command via LiveKit data channel
      *
-     * IMPORTANT: Based on SDK analysis (LiveAvatarSession.ts):
-     * - Audio commands (agent.speak, agent.speak_end) → WebSocket with "type" field
-     * - Text commands (avatar.speak_text, avatar.speak_response) → LiveKit Data Channel with "event_type" field
-     *
-     * The SDK uses "event_type" (NOT "type") for data channel commands!
-     * See SDK's repeat() method: {event_type: "avatar.speak_text", text: "..."}
+     * Based on SDK analysis (LiveAvatarSession.ts):
+     * - Text commands use LiveKit Data Channel with "event_type" field
+     * - Format: {event_type: "avatar.speak_text", text: "..."}
      */
     private fun sendSpeakViaDataChannel(text: String) {
         try {
@@ -1235,7 +1046,7 @@ class LiveAvatarSessionManager(context: Context) : AudioDeltaBuffer.AudioFlushLi
      * Send command via LiveKit data channel (primary transport for avatar commands)
      *
      * LiveAvatar expects commands on a specific topic for avatar control.
-     * This includes audio streaming, text commands, and interrupts.
+     * This includes text commands and interrupts.
      *
      * Topic is configurable via LiveAvatarConfig.DATA_CHANNEL_TOPIC
      */
@@ -1330,7 +1141,6 @@ class LiveAvatarSessionManager(context: Context) : AudioDeltaBuffer.AudioFlushLi
 
         // Cleanup
         stopKeepAlive()
-        audioDeltaBuffer.clear()
 
         webSocket?.close(1000, "Error cleanup")
         webSocket = null
@@ -1352,7 +1162,6 @@ class LiveAvatarSessionManager(context: Context) : AudioDeltaBuffer.AudioFlushLi
      */
     fun destroy() {
         stopSession()
-        audioDeltaBuffer.destroy()
         textDeltaBuffer.destroy()
         coroutineScope.cancel()
 

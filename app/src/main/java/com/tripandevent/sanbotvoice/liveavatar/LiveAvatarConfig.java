@@ -6,7 +6,8 @@ import com.tripandevent.sanbotvoice.BuildConfig;
  * LiveAvatar Configuration
  *
  * Centralized configuration for LiveAvatar integration.
- * Supports audio-based streaming for lowest latency.
+ * Uses text-based TTS mode (FULL mode) where text deltas are sent to
+ * LiveAvatar which generates audio and lip-sync together.
  */
 public class LiveAvatarConfig {
 
@@ -15,27 +16,6 @@ public class LiveAvatarConfig {
      */
     public static boolean isEnabled() {
         return BuildConfig.ENABLE_LIVEAVATAR;
-    }
-
-    /**
-     * Whether to use audio streaming mode
-     *
-     * Based on LiveAvatar Web SDK analysis:
-     *
-     * CUSTOM mode supports streaming external audio for lip sync:
-     * - Audio chunks (24kHz 16-bit PCM) are sent via WebSocket as base64
-     * - Format: {type: "agent.speak", event_id: "...", audio: "base64..."}
-     * - End signal: {type: "agent.speak_end", event_id: "..."}
-     * - Server performs lip sync rendering on the video stream
-     *
-     * When true: Use external audio (from OpenAI) with server-side lip sync
-     * When false: Use text-based TTS (LiveAvatar's built-in TTS)
-     *
-     * Note: Audio streaming in CUSTOM mode DOES support lip sync -
-     * the server analyzes the audio and generates matching mouth movements.
-     */
-    public static boolean useAudioStreaming() {
-        return BuildConfig.LIVEAVATAR_AUDIO_STREAMING;
     }
 
     /**
@@ -54,52 +34,18 @@ public class LiveAvatarConfig {
     }
 
     /**
-     * Session mode (based on LiveAvatar Web SDK):
+     * Session mode - uses FULL mode for text-based TTS
      *
      * FULL mode:
      * - Complete turnkey avatar interaction
      * - Built-in text-to-speech (voice_id, context_id, language)
      * - Avatar generates voice responses automatically
-     * - Use session.message() for text responses
-     * - REQUIRED when using WebRTC mode (audio not available as deltas)
-     *
-     * CUSTOM mode:
-     * - Bring your own TTS/audio integration
-     * - More control over voice synthesis
-     * - Use session.repeatAudio() with PCM 24kHz audio
-     * - Only works when you have raw PCM audio data (not WebRTC)
+     * - Text commands sent via LiveKit data channel
+     * - Server generates audio and lip-sync together
      */
     public static String getSessionMode() {
-        // Use FULL mode because WebRTC audio isn't available as delta events
-        // FULL mode uses LiveAvatar's built-in TTS for lip sync
         return "FULL";
     }
-
-    // ============================================
-    // AUDIO STREAMING CONSTANTS
-    // ============================================
-
-    /**
-     * Audio sample rate (matches OpenAI output)
-     */
-    public static final int AUDIO_SAMPLE_RATE = 24000;
-
-    /**
-     * Bytes per sample (16-bit audio)
-     */
-    public static final int BYTES_PER_SAMPLE = 2;
-
-    /**
-     * Audio chunk duration in milliseconds
-     * 20ms is optimal for WebRTC/VoIP
-     */
-    public static final int AUDIO_CHUNK_DURATION_MS = 20;
-
-    /**
-     * Bytes per audio chunk
-     * 24000 Hz * 0.020s * 2 bytes = 960 bytes
-     */
-    public static final int BYTES_PER_CHUNK = (AUDIO_SAMPLE_RATE * AUDIO_CHUNK_DURATION_MS / 1000) * BYTES_PER_SAMPLE;
 
     // ============================================
     // SESSION CONSTANTS

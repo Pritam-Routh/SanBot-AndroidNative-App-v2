@@ -24,7 +24,7 @@ public class AudioBooster {
     private LoudnessEnhancer loudnessEnhancer;
     
     // Boost level in millibels (1000 mB = 10 dB)
-    private static final int DEFAULT_BOOST_MB = 1000;  // 10 dB boost
+    private static final int DEFAULT_BOOST_MB = 2000;  // 20 dB boost (increased from 10 dB)
     private static final int MAX_BOOST_MB = 3000;      // 30 dB max boost
     
     // Track original settings for restoration
@@ -70,37 +70,54 @@ public class AudioBooster {
             Logger.d(TAG, "Audio already configured for max volume");
             return;
         }
-        
+
+        applyMaxVolumeSettings();
+    }
+
+    /**
+     * Force reconfigure audio for maximum volume even if already configured.
+     * Use this when another audio system (like LiveKit) may have overridden settings.
+     */
+    public void forceReconfigure() {
+        Logger.d(TAG, "Force reconfiguring audio for max volume");
+        applyMaxVolumeSettings();
+    }
+
+    /**
+     * Apply maximum volume settings
+     */
+    private void applyMaxVolumeSettings() {
         try {
-            // Save original settings first
+            // Save original settings first (only once)
             saveOriginalSettings();
-            
+
             // Set audio mode for voice communication
             audioManager.setMode(AudioManager.MODE_IN_COMMUNICATION);
-            
+
             // Enable speakerphone for louder output
             audioManager.setSpeakerphoneOn(true);
-            
+
             // Maximize voice call volume
             int maxVoiceVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_VOICE_CALL);
             audioManager.setStreamVolume(AudioManager.STREAM_VOICE_CALL, maxVoiceVolume, 0);
-            
+
             // Maximize music volume (some devices route WebRTC audio here)
             int maxMusicVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
             audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, maxMusicVolume, 0);
-            
+
             // Maximize system volume
             int maxSystemVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_SYSTEM);
             audioManager.setStreamVolume(AudioManager.STREAM_SYSTEM, maxSystemVolume, 0);
-            
+
             // Request audio focus
             requestAudioFocus();
-            
+
             isConfigured = true;
-            
-            Logger.i(TAG, "Audio configured for max volume - Voice: %d/%d, Music: %d/%d", 
-                maxVoiceVolume, maxVoiceVolume, maxMusicVolume, maxMusicVolume);
-            
+
+            Logger.i(TAG, "Audio configured for max volume - Voice: %d/%d, Music: %d/%d, Speaker: %b",
+                maxVoiceVolume, maxVoiceVolume, maxMusicVolume, maxMusicVolume,
+                audioManager.isSpeakerphoneOn());
+
         } catch (Exception e) {
             Logger.e(e, "Failed to configure audio volume");
         }
