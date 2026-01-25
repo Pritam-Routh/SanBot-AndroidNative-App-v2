@@ -829,18 +829,56 @@ class LiveAvatarSessionManager(context: Context) : AudioDeltaBuffer.AudioFlushLi
                 Log.d(TAG, "WebSocket message: $type")
 
                 when (type) {
-                    "user.transcription" -> {
-                        listener?.onUserTranscription(json.optString("text", ""))
+                    // Session state updates
+                    "session.state_updated" -> {
+                        val sessionState = json.optString("state", "")
+                        Log.d(TAG, "Session state updated: $sessionState")
+                        // States: "connected", "connecting", "closed", "closing"
+                        when (sessionState) {
+                            "connected" -> {
+                                // Session is ready for commands
+                                if (state.get() == SessionState.CONNECTING) {
+                                    setState(SessionState.CONNECTED)
+                                }
+                            }
+                            "closed", "closing" -> {
+                                Log.w(TAG, "Session closing/closed via WebSocket")
+                            }
+                        }
                     }
-                    "avatar.transcription" -> {
-                        listener?.onAvatarTranscription(json.optString("text", ""))
+
+                    // Avatar speak events (per API spec)
+                    "agent.speak_started" -> {
+                        val eventId = json.optString("event_id", "")
+                        val taskId = json.optJSONObject("task")?.optString("id", "") ?: ""
+                        Log.d(TAG, "Avatar speak started: event=$eventId, task=$taskId")
+                        listener?.onAvatarSpeakStarted()
                     }
+
+                    "agent.speak_ended" -> {
+                        val eventId = json.optString("event_id", "")
+                        val taskId = json.optJSONObject("task")?.optString("id", "") ?: ""
+                        Log.d(TAG, "Avatar speak ended: event=$eventId, task=$taskId")
+                        listener?.onAvatarSpeakEnded()
+                    }
+
+                    // Legacy event names (for backward compatibility)
                     "avatar.speak_started" -> {
                         listener?.onAvatarSpeakStarted()
                     }
                     "avatar.speak_ended" -> {
                         listener?.onAvatarSpeakEnded()
                     }
+
+                    // Transcriptions
+                    "user.transcription" -> {
+                        listener?.onUserTranscription(json.optString("text", ""))
+                    }
+                    "avatar.transcription" -> {
+                        listener?.onAvatarTranscription(json.optString("text", ""))
+                    }
+
+                    // Errors
                     "error" -> {
                         val errorMsg = json.optString("message", "Unknown error")
                         Log.e(TAG, "WebSocket error: $errorMsg")
@@ -881,22 +919,91 @@ class LiveAvatarSessionManager(context: Context) : AudioDeltaBuffer.AudioFlushLi
     /**
      * Send interrupt signal to LiveAvatar
      *
-     * Uses avatar.interrupt event type as per LiveAvatar SDK.
      * Stops avatar mid-speech for barge-in support.
+     * Clears all scheduled speaking events.
      *
-     * Format: {"event_type": "avatar.interrupt"}
+     * Format: {"type": "agent.interrupt"}
      */
     private fun sendInterrupt() {
         try {
             val command = JSONObject().apply {
-                put("event_type", "avatar.interrupt")
+                put("type", "agent.interrupt")
             }
 
             sendToWebSocket(command.toString())
-            Log.d(TAG, "Sent avatar.interrupt")
+            Log.d(TAG, "Sent agent.interrupt")
 
         } catch (e: JSONException) {
             Log.e(TAG, "Error creating interrupt JSON", e)
+        }
+    }
+
+    /**
+     * Transition avatar to listening state
+     *
+     * Format: {"type": "agent.start_listening", "event_id": "<uuid>"}
+     */
+    fun startListening() {
+        if (!isConnected()) return
+
+        try {
+            val eventId = UUID.randomUUID().toString()
+            val command = JSONObject().apply {
+                put("type", "agent.start_listening")
+                put("event_id", eventId)
+            }
+
+            sendToWebSocket(command.toString())
+            Log.d(TAG, "Sent agent.start_listening")
+
+        } catch (e: JSONException) {
+            Log.e(TAG, "Error creating start_listening JSON", e)
+        }
+    }
+
+    /**
+     * Transition avatar from listening to idle state
+     *
+     * Format: {"type": "agent.stop_listening", "event_id": "<uuid>"}
+     */
+    fun stopListening() {
+        if (!isConnected()) return
+
+        try {
+            val eventId = UUID.randomUUID().toString()
+            val command = JSONObject().apply {
+                put("type", "agent.stop_listening")
+                put("event_id", eventId)
+            }
+
+            sendToWebSocket(command.toString())
+            Log.d(TAG, "Sent agent.stop_listening")
+
+        } catch (e: JSONException) {
+            Log.e(TAG, "Error creating stop_listening JSON", e)
+        }
+    }
+
+    /**
+     * Send keep-alive via WebSocket
+     *
+     * Format: {"type": "session.keep_alive", "event_id": "<uuid>"}
+     */
+    private fun sendWebSocketKeepAlive() {
+        if (!webSocketConnected) return
+
+        try {
+            val eventId = UUID.randomUUID().toString()
+            val command = JSONObject().apply {
+                put("type", "session.keep_alive")
+                put("event_id", eventId)
+            }
+
+            sendToWebSocket(command.toString())
+            Log.d(TAG, "Sent session.keep_alive")
+
+        } catch (e: JSONException) {
+            Log.e(TAG, "Error creating keep_alive JSON", e)
         }
     }
 

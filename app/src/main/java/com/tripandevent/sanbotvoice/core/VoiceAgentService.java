@@ -20,6 +20,7 @@ import com.tripandevent.sanbotvoice.R;
 import com.tripandevent.sanbotvoice.config.AgentConfig;
 import com.tripandevent.sanbotvoice.audio.AudioBooster;
 import com.tripandevent.sanbotvoice.audio.AudioProcessor;
+import com.tripandevent.sanbotvoice.audio.RemoteAudioCapture;
 import com.tripandevent.sanbotvoice.audio.SpeakerIdentifier;
 import com.tripandevent.sanbotvoice.analytics.ConversationAnalytics;
 import com.tripandevent.sanbotvoice.functions.FunctionExecutor;
@@ -37,6 +38,8 @@ import com.tripandevent.sanbotvoice.liveavatar.LiveAvatarSessionManager;
 import com.tripandevent.sanbotvoice.liveavatar.AudioDeltaBuffer;
 
 import org.webrtc.AudioTrack;
+
+import java.io.File;
 
 /**
  * Foreground service that manages the voice conversation lifecycle.
@@ -67,6 +70,10 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
     // LiveAvatar components (Audio-based streaming for lowest latency)
     private LiveAvatarSessionManager liveAvatarSessionManager;
     private boolean liveAvatarEnabled = false;
+
+    // Audio capture for PCM output from OpenAI
+    private boolean audioCaptureEnabled = false;
+    private File audioRecordingFile = null;
 
     // State
     private ConversationState currentState = ConversationState.IDLE;
@@ -100,6 +107,27 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
         // HeyGen Avatar callbacks
         default void onAvatarVideoReady() {}
         default void onAvatarError(String error) {}
+
+        /**
+         * Called when PCM audio is captured from OpenAI's response.
+         * Audio format: PCM 16-bit signed, little-endian, 24kHz, mono
+         *
+         * @param pcmData Raw PCM audio bytes
+         * @param numSamples Number of audio samples
+         * @param sampleRate Sample rate in Hz (24000)
+         * @param channels Number of channels (1 = mono)
+         */
+        default void onRemoteAudioCaptured(byte[] pcmData, int numSamples, int sampleRate, int channels) {}
+
+        /**
+         * Called when remote audio capture starts
+         */
+        default void onRemoteAudioCaptureStarted() {}
+
+        /**
+         * Called when remote audio capture stops
+         */
+        default void onRemoteAudioCaptureStopped() {}
     }
     
     public class LocalBinder extends Binder {
@@ -112,11 +140,13 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
     public void onCreate() {
         super.onCreate();
         Logger.i(TAG, "VoiceAgentService created");
-        
-        // Initialize WebRTC manager
+
+        // Initialize WebRTC manager with audio capture enabled
+        // This allows capturing PCM 16-bit 24kHz audio from OpenAI
         webRTCManager = new WebRTCManager(this, this);
-        webRTCManager.initialize();
-        
+        audioCaptureEnabled = true;  // Enable audio capture by default
+        webRTCManager.initialize(audioCaptureEnabled);
+
         // Initialize function executor with context for robot motion
         functionExecutor = new FunctionExecutor();
         functionExecutor.setContext(this);
@@ -574,7 +604,126 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
         }
         return 0;
     }
-    
+
+    // ============================================
+    // REMOTE AUDIO CAPTURE METHODS
+    // ============================================
+
+    /**
+     * Check if audio capture is enabled.
+     * Audio capture allows intercepting PCM 16-bit 24kHz audio from OpenAI.
+     */
+    public boolean isAudioCaptureEnabled() {
+        return audioCaptureEnabled && webRTCManager != null && webRTCManager.isAudioCaptureEnabled();
+    }
+
+    /**
+     * Check if currently capturing audio from OpenAI
+     */
+    public boolean isCapturingAudio() {
+        return webRTCManager != null && webRTCManager.isCapturingAudio();
+    }
+
+    /**
+     * Enable or disable audio capture.
+     * Note: Audio capture must be enabled during initialization to work.
+     *
+     * @param enabled If true, captured audio will be forwarded to listener
+     */
+    public void setAudioCaptureEnabled(boolean enabled) {
+        if (webRTCManager != null) {
+            webRTCManager.setAudioCaptureEnabled(enabled);
+        }
+    }
+
+    /**
+     * Start recording captured audio to a file.
+     * Creates a raw PCM file (16-bit signed, little-endian, 24kHz, mono).
+     *
+     * @param file The file to write PCM data to
+     * @return true if recording started successfully
+     */
+    public boolean startAudioRecording(File file) {
+        if (webRTCManager != null) {
+            audioRecordingFile = file;
+            return webRTCManager.startAudioRecording(file);
+        }
+        return false;
+    }
+
+    /**
+     * Start recording captured audio to the default location.
+     * Creates a file in the app's cache directory.
+     *
+     * @return true if recording started successfully
+     */
+    public boolean startAudioRecording() {
+        File cacheDir = getCacheDir();
+        String fileName = "openai_audio_" + System.currentTimeMillis() + ".pcm";
+        File file = new File(cacheDir, fileName);
+        return startAudioRecording(file);
+    }
+
+    /**
+     * Stop recording audio and get the recorded file.
+     *
+     * @return The recorded PCM file, or null if not recording
+     */
+    public File stopAudioRecording() {
+        if (webRTCManager != null) {
+            webRTCManager.stopAudioRecording();
+        }
+        File result = audioRecordingFile;
+        audioRecordingFile = null;
+        return result;
+    }
+
+    /**
+     * Stop recording and convert to WAV file.
+     *
+     * @return The WAV file, or null if conversion failed
+     */
+    public File stopAudioRecordingAsWav() {
+        File pcmFile = stopAudioRecording();
+        if (pcmFile == null || !pcmFile.exists()) {
+            return null;
+        }
+
+        String wavFileName = pcmFile.getName().replace(".pcm", ".wav");
+        File wavFile = new File(pcmFile.getParent(), wavFileName);
+
+        if (RemoteAudioCapture.convertPcmToWav(pcmFile, wavFile)) {
+            // Optionally delete the PCM file
+            pcmFile.delete();
+            return wavFile;
+        }
+
+        return null;
+    }
+
+    /**
+     * Get the RemoteAudioCapture instance for advanced control.
+     *
+     * @return The RemoteAudioCapture instance, or null if not enabled
+     */
+    public RemoteAudioCapture getRemoteAudioCapture() {
+        return webRTCManager != null ? webRTCManager.getRemoteAudioCapture() : null;
+    }
+
+    /**
+     * Get total bytes of audio captured in current session
+     */
+    public long getAudioBytesCaptured() {
+        return webRTCManager != null ? webRTCManager.getAudioBytesCaptured() : 0;
+    }
+
+    /**
+     * Get estimated duration of captured audio in milliseconds
+     */
+    public long getAudioDurationCapturedMs() {
+        return webRTCManager != null ? webRTCManager.getAudioDurationCapturedMs() : 0;
+    }
+
     public void processAudioSamples(short[] samples) {
         if (audioProcessor != null && audioProcessor.isInitialized()) {
             audioProcessor.processAudioSamples(samples);
@@ -729,7 +878,11 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
     }
 
     /**
-     * Handle audio delta from OpenAI - stream directly to LiveAvatar for lowest latency
+     * Handle audio delta from OpenAI data channel (base64 encoded)
+     *
+     * NOTE: When using WebRTC audio capture (onRemoteAudioCaptured), this path
+     * is NOT used because the captured PCM audio is sent directly to LiveAvatar.
+     * This handler is kept as a fallback for data channel audio events.
      */
     private void handleAudioDelta(ServerEvents.ParsedEvent event) {
         String audioDelta = event.getAudioDelta();
@@ -740,17 +893,21 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
         // Debug: Log LiveAvatar state
         boolean connected = liveAvatarSessionManager != null && liveAvatarSessionManager.isConnected();
         boolean useAudio = LiveAvatarConfig.useAudioStreaming();
-        Logger.d(TAG, "AudioDelta: liveAvatarEnabled=%b, connected=%b, useAudioStreaming=%b",
+        Logger.d(TAG, "AudioDelta (data channel): liveAvatarEnabled=%b, connected=%b, useAudioStreaming=%b",
                 liveAvatarEnabled, connected, useAudio);
 
-        // Stream audio delta to LiveAvatar if enabled and using audio streaming mode
+        // FALLBACK: Stream audio delta to LiveAvatar via AudioDeltaBuffer
+        // This is used when audio comes via data channel (base64) instead of WebRTC capture
+        // The primary path is onRemoteAudioCaptured() which sends PCM directly
         if (liveAvatarEnabled && liveAvatarSessionManager != null &&
             liveAvatarSessionManager.isConnected() && LiveAvatarConfig.useAudioStreaming()) {
-            // Get the audio buffer and add the delta for streaming
-            AudioDeltaBuffer audioBuffer = liveAvatarSessionManager.getAudioDeltaBuffer();
-            if (audioBuffer != null) {
-                audioBuffer.addAudioDelta(audioDelta);
-                Logger.d(TAG, "Audio delta sent to LiveAvatar buffer");
+            // Only use this path if audio capture is not active
+            if (!isCapturingAudio()) {
+                AudioDeltaBuffer audioBuffer = liveAvatarSessionManager.getAudioDeltaBuffer();
+                if (audioBuffer != null) {
+                    audioBuffer.addAudioDelta(audioDelta);
+                    Logger.d(TAG, "Audio delta sent to LiveAvatar buffer (fallback)");
+                }
             }
         }
     }
@@ -759,12 +916,15 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
      * Handle audio done from OpenAI - complete the audio stream to LiveAvatar
      */
     private void handleAudioDone(ServerEvents.ParsedEvent event) {
-        // Complete audio streaming to LiveAvatar
+        // Complete audio streaming to LiveAvatar (for data channel audio path)
         if (liveAvatarEnabled && liveAvatarSessionManager != null &&
             liveAvatarSessionManager.isConnected() && LiveAvatarConfig.useAudioStreaming()) {
-            AudioDeltaBuffer audioBuffer = liveAvatarSessionManager.getAudioDeltaBuffer();
-            if (audioBuffer != null) {
-                audioBuffer.complete();
+            // Only complete if using data channel audio (not WebRTC capture)
+            if (!isCapturingAudio()) {
+                AudioDeltaBuffer audioBuffer = liveAvatarSessionManager.getAudioDeltaBuffer();
+                if (audioBuffer != null && audioBuffer.isStreaming()) {
+                    audioBuffer.complete();
+                }
             }
         }
     }
@@ -779,18 +939,25 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
             heyGenSessionManager.interrupt();
         }
         if (liveAvatarEnabled && liveAvatarSessionManager != null && liveAvatarSessionManager.isConnected()) {
+            // Interrupt any ongoing speech and transition to listening state
             liveAvatarSessionManager.interrupt();
+            liveAvatarSessionManager.startListening();
         }
 
         if (analytics != null) {
             analytics.recordUserMessage();
         }
     }
-    
+
     @Override
     public void onSpeechStopped() {
         Logger.d(TAG, "Speech input stopped");
         setState(ConversationState.PROCESSING);
+
+        // Transition avatar from listening to idle/processing state
+        if (liveAvatarEnabled && liveAvatarSessionManager != null && liveAvatarSessionManager.isConnected()) {
+            liveAvatarSessionManager.stopListening();
+        }
     }
     
     @Override
@@ -798,20 +965,85 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
         Logger.d(TAG, "Remote audio track received - AI is speaking");
         setState(ConversationState.SPEAKING);
 
-        // When LiveAvatar is enabled, mute OpenAI's WebRTC audio
-        // LiveAvatar will play audio from its own TTS (perfect audio-visual sync)
+        // When LiveAvatar is enabled with audio streaming, mute OpenAI's WebRTC speaker
+        // The captured PCM audio will be sent to LiveAvatar for lip-synced playback
         if (liveAvatarEnabled && liveAvatarSessionManager != null && liveAvatarSessionManager.isConnected()) {
-            Logger.i(TAG, "Muting OpenAI audio - LiveAvatar will handle audio playback");
-            webRTCManager.setRemoteAudioMuted(true);
-            // Enable text buffer for lip sync
-            liveAvatarSessionManager.enableTextBuffer();
+            if (LiveAvatarConfig.useAudioStreaming()) {
+                // AUDIO STREAMING MODE: Mute OpenAI speaker, audio is captured and sent to LiveAvatar
+                Logger.i(TAG, "Muting OpenAI speaker - LiveAvatar will play captured audio with lip sync");
+                webRTCManager.setRemoteAudioMuted(true);
+                // Ensure audio capture is enabled
+                webRTCManager.setAudioCaptureEnabled(true);
+            } else {
+                // TEXT STREAMING MODE: Mute OpenAI speaker, LiveAvatar uses its own TTS
+                Logger.i(TAG, "Muting OpenAI speaker - LiveAvatar will use TTS for audio");
+                webRTCManager.setRemoteAudioMuted(true);
+                liveAvatarSessionManager.enableTextBuffer();
+            }
         } else {
-            // No avatar - let OpenAI audio play directly
+            // No avatar - let OpenAI audio play directly through speaker
             // Ensure audio is boosted when AI starts speaking
             if (audioBooster != null && !audioBooster.isConfigured()) {
                 audioBooster.configureForMaxVolume();
                 Logger.i(TAG, "Audio boosted for AI speech: %s", audioBooster.getVolumeInfo());
             }
+        }
+    }
+
+    /**
+     * Called when PCM audio is captured from OpenAI's WebRTC output.
+     * Audio format: PCM 16-bit signed, little-endian, 24kHz, mono
+     *
+     * This is the DIRECT AUDIO PATH for lowest latency:
+     * OpenAI WebRTC -> Captured PCM -> LiveAvatar WebSocket -> Avatar Lip Sync
+     */
+    @Override
+    public void onRemoteAudioCaptured(byte[] pcmData, int numSamples, int sampleRate, int channels) {
+        // Forward captured audio to listener (for any other consumers)
+        if (listener != null) {
+            listener.onRemoteAudioCaptured(pcmData, numSamples, sampleRate, channels);
+        }
+
+        // DIRECT STREAMING: Send captured PCM audio to LiveAvatar for lip-synced playback
+        // This bypasses the AudioDeltaBuffer and sends directly via agent.speak WebSocket event
+        if (liveAvatarEnabled && liveAvatarSessionManager != null &&
+            liveAvatarSessionManager.isConnected() && LiveAvatarConfig.useAudioStreaming()) {
+            // Send raw PCM bytes directly to LiveAvatar WebSocket
+            // LiveAvatar will handle lip sync and audio playback
+            liveAvatarSessionManager.sendAudioBinary(pcmData);
+        }
+    }
+
+    /**
+     * Called when remote audio capture starts
+     */
+    @Override
+    public void onRemoteAudioCaptureStarted() {
+        Logger.i(TAG, "Remote audio capture started (PCM 16-bit 24kHz mono)");
+        if (listener != null) {
+            listener.onRemoteAudioCaptureStarted();
+        }
+    }
+
+    /**
+     * Called when remote audio capture stops
+     */
+    @Override
+    public void onRemoteAudioCaptureStopped() {
+        Logger.i(TAG, "Remote audio capture stopped");
+
+        // Signal end of audio stream to LiveAvatar
+        if (liveAvatarEnabled && liveAvatarSessionManager != null &&
+            liveAvatarSessionManager.isConnected() && LiveAvatarConfig.useAudioStreaming()) {
+            // Complete the audio buffer which will send agent.speak_end
+            AudioDeltaBuffer audioBuffer = liveAvatarSessionManager.getAudioDeltaBuffer();
+            if (audioBuffer != null && audioBuffer.isStreaming()) {
+                audioBuffer.complete();
+            }
+        }
+
+        if (listener != null) {
+            listener.onRemoteAudioCaptureStopped();
         }
     }
     
@@ -909,13 +1141,16 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
 
         // Complete any remaining audio/text to LiveAvatar
         if (liveAvatarEnabled && liveAvatarSessionManager != null && liveAvatarSessionManager.isConnected()) {
-            // Flush text buffer for TTS-based lip sync
-            liveAvatarSessionManager.flushTextBuffer();
-
-            // Also complete audio buffer if it was streaming
-            AudioDeltaBuffer audioBuffer = liveAvatarSessionManager.getAudioDeltaBuffer();
-            if (audioBuffer != null && audioBuffer.isStreaming()) {
-                audioBuffer.complete();
+            if (LiveAvatarConfig.useAudioStreaming()) {
+                // AUDIO STREAMING MODE: Complete the audio buffer
+                // This will send agent.speak_end to signal end of audio
+                AudioDeltaBuffer audioBuffer = liveAvatarSessionManager.getAudioDeltaBuffer();
+                if (audioBuffer != null && audioBuffer.isStreaming()) {
+                    audioBuffer.complete();
+                }
+            } else {
+                // TEXT STREAMING MODE: Flush text buffer for TTS-based lip sync
+                liveAvatarSessionManager.flushTextBuffer();
             }
         }
 

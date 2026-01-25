@@ -6,6 +6,7 @@ import android.os.Looper;
 
 import com.tripandevent.sanbotvoice.api.ApiClient;
 import com.tripandevent.sanbotvoice.api.TokenManager;
+import com.tripandevent.sanbotvoice.audio.RemoteAudioCapture;
 import com.tripandevent.sanbotvoice.openai.events.ClientEvents;
 import com.tripandevent.sanbotvoice.openai.events.ServerEvents;
 import com.tripandevent.sanbotvoice.utils.Constants;
@@ -66,6 +67,11 @@ public class WebRTCManager {
     private AudioTrack localAudioTrack;
     private AudioTrack remoteAudioTrack;
 
+    // Audio capture for intercepting OpenAI audio output
+    private RemoteAudioCapture remoteAudioCapture;
+    private boolean audioCaptureEnabled = false;
+    private final AtomicBoolean isCapturingAudio = new AtomicBoolean(false);
+
     // State
     private final AtomicBoolean isConnected = new AtomicBoolean(false);
     private final AtomicBoolean isConnecting = new AtomicBoolean(false);
@@ -82,6 +88,27 @@ public class WebRTCManager {
         void onSpeechStarted();
         void onSpeechStopped();
         void onRemoteAudioTrack(AudioTrack track);
+
+        /**
+         * Called when PCM audio is captured from the remote track (OpenAI output).
+         * Audio format: PCM 16-bit signed, little-endian, 24kHz, mono
+         *
+         * @param pcmData Raw PCM audio bytes
+         * @param numSamples Number of audio samples
+         * @param sampleRate Sample rate in Hz (24000)
+         * @param channels Number of channels (1 = mono)
+         */
+        default void onRemoteAudioCaptured(byte[] pcmData, int numSamples, int sampleRate, int channels) {}
+
+        /**
+         * Called when remote audio capture starts
+         */
+        default void onRemoteAudioCaptureStarted() {}
+
+        /**
+         * Called when remote audio capture stops
+         */
+        default void onRemoteAudioCaptureStopped() {}
     }
     
     public WebRTCManager(Context context, WebRTCCallback callback) {
@@ -96,32 +123,89 @@ public class WebRTCManager {
      * Must be called before connect().
      */
     public void initialize() {
-        Logger.d(TAG, "Initializing WebRTC...");
-        
+        initialize(false);  // Default: no audio capture
+    }
+
+    /**
+     * Initialize WebRTC components with optional audio capture.
+     *
+     * Note: Audio capture is done via data channel (base64 audio deltas from OpenAI),
+     * not via WebRTC playout interception. The enableAudioCapture flag sets up the
+     * RemoteAudioCapture utility class for processing and forwarding audio data.
+     *
+     * @param enableAudioCapture If true, initializes audio capture utility for processing data channel audio
+     */
+    public void initialize(boolean enableAudioCapture) {
+        Logger.d(TAG, "Initializing WebRTC... (audio capture: %s)", enableAudioCapture);
+        this.audioCaptureEnabled = enableAudioCapture;
+
         executor.execute(() -> {
             try {
                 // Initialize PeerConnectionFactory
-                PeerConnectionFactory.InitializationOptions initOptions = 
+                PeerConnectionFactory.InitializationOptions initOptions =
                     PeerConnectionFactory.InitializationOptions.builder(context)
                         .setEnableInternalTracer(false)
                         .createInitializationOptions();
                 PeerConnectionFactory.initialize(initOptions);
-                
+
                 // Create audio device module
                 AudioDeviceModule audioDeviceModule = JavaAudioDeviceModule.builder(context)
                     .setUseHardwareAcousticEchoCanceler(WebRTCConfig.AudioConstraints.ECHO_CANCELLATION)
                     .setUseHardwareNoiseSuppressor(WebRTCConfig.AudioConstraints.NOISE_SUPPRESSION)
                     .createAudioDeviceModule();
-                
+
+                // Set up audio capture utility if enabled
+                // Note: This utility processes audio from data channel, not WebRTC playout
+                if (enableAudioCapture) {
+                    remoteAudioCapture = new RemoteAudioCapture();
+                    remoteAudioCapture.setListener(new RemoteAudioCapture.AudioCaptureListener() {
+                        @Override
+                        public void onPcmAudioCaptured(byte[] pcmData, int numSamples, int sampleRate, int channels) {
+                            // Forward to callback
+                            mainHandler.post(() -> {
+                                if (callback != null) {
+                                    callback.onRemoteAudioCaptured(pcmData, numSamples, sampleRate, channels);
+                                }
+                            });
+                        }
+
+                        @Override
+                        public void onCaptureStarted() {
+                            isCapturingAudio.set(true);
+                            mainHandler.post(() -> {
+                                if (callback != null) {
+                                    callback.onRemoteAudioCaptureStarted();
+                                }
+                            });
+                        }
+
+                        @Override
+                        public void onCaptureStopped() {
+                            isCapturingAudio.set(false);
+                            mainHandler.post(() -> {
+                                if (callback != null) {
+                                    callback.onRemoteAudioCaptureStopped();
+                                }
+                            });
+                        }
+
+                        @Override
+                        public void onCaptureError(String error) {
+                            Logger.e(TAG, "Audio capture error: %s", error);
+                        }
+                    });
+                    Logger.d(TAG, "Audio capture utility initialized");
+                }
+
                 // Create PeerConnectionFactory
                 PeerConnectionFactory.Options options = new PeerConnectionFactory.Options();
                 peerConnectionFactory = PeerConnectionFactory.builder()
                     .setOptions(options)
                     .setAudioDeviceModule(audioDeviceModule)
                     .createPeerConnectionFactory();
-                
+
                 Logger.d(TAG, "WebRTC initialized successfully");
-                
+
             } catch (Exception e) {
                 Logger.e(e, "Failed to initialize WebRTC");
                 notifyError("Failed to initialize WebRTC: " + e.getMessage());
@@ -570,6 +654,83 @@ public class WebRTCManager {
             Logger.d(TAG, "Remote audio %s", muted ? "muted" : "unmuted");
         }
     }
+
+    // ============================================
+    // AUDIO CAPTURE METHODS
+    // ============================================
+
+    /**
+     * Check if audio capture is enabled
+     */
+    public boolean isAudioCaptureEnabled() {
+        return audioCaptureEnabled && remoteAudioCapture != null;
+    }
+
+    /**
+     * Check if currently capturing audio
+     */
+    public boolean isCapturingAudio() {
+        return isCapturingAudio.get();
+    }
+
+    /**
+     * Enable or disable audio capture
+     * Note: Audio capture must be enabled during initialize() to work
+     *
+     * @param enabled If true, captured audio will be forwarded to callback
+     */
+    public void setAudioCaptureEnabled(boolean enabled) {
+        if (remoteAudioCapture != null) {
+            remoteAudioCapture.setEnabled(enabled);
+            Logger.d(TAG, "Audio capture %s", enabled ? "enabled" : "disabled");
+        }
+    }
+
+    /**
+     * Start recording captured audio to a file.
+     * Audio format: PCM 16-bit signed, little-endian, 24kHz, mono
+     *
+     * @param file The file to write PCM data to
+     * @return true if recording started successfully
+     */
+    public boolean startAudioRecording(java.io.File file) {
+        if (remoteAudioCapture != null) {
+            return remoteAudioCapture.startRecordingToFile(file);
+        }
+        Logger.w(TAG, "Audio capture not initialized - call initialize(true) first");
+        return false;
+    }
+
+    /**
+     * Stop recording audio to file
+     */
+    public void stopAudioRecording() {
+        if (remoteAudioCapture != null) {
+            remoteAudioCapture.stopRecordingToFile();
+        }
+    }
+
+    /**
+     * Get the RemoteAudioCapture instance for advanced control
+     * @return The RemoteAudioCapture instance, or null if not enabled
+     */
+    public RemoteAudioCapture getRemoteAudioCapture() {
+        return remoteAudioCapture;
+    }
+
+    /**
+     * Get total bytes of audio captured
+     */
+    public long getAudioBytesCaptured() {
+        return remoteAudioCapture != null ? remoteAudioCapture.getTotalBytesCaptured() : 0;
+    }
+
+    /**
+     * Get estimated duration of captured audio in milliseconds
+     */
+    public long getAudioDurationCapturedMs() {
+        return remoteAudioCapture != null ? remoteAudioCapture.getAudioDurationMs() : 0;
+    }
     
     /**
      * Check if connected
@@ -583,32 +744,41 @@ public class WebRTCManager {
      */
     public void disconnect() {
         Logger.d(TAG, "Disconnecting...");
-        
+
         isConnected.set(false);
         isConnecting.set(false);
-        
+        isCapturingAudio.set(false);
+
         executor.execute(() -> {
+            // Stop audio recording if active
+            if (remoteAudioCapture != null) {
+                remoteAudioCapture.stopRecordingToFile();
+                remoteAudioCapture.detach();
+            }
+
             if (dataChannel != null) {
                 dataChannel.close();
                 dataChannel = null;
             }
-            
+
             if (localAudioTrack != null) {
                 localAudioTrack.setEnabled(false);
                 localAudioTrack.dispose();
                 localAudioTrack = null;
             }
-            
+
             if (audioSource != null) {
                 audioSource.dispose();
                 audioSource = null;
             }
-            
+
             if (peerConnection != null) {
                 peerConnection.close();
                 peerConnection = null;
             }
-            
+
+            remoteAudioTrack = null;
+
             Logger.d(TAG, "Disconnected");
             notifyDisconnected("User initiated disconnect");
         });
@@ -619,17 +789,23 @@ public class WebRTCManager {
      */
     public void release() {
         disconnect();
-        
+
         executor.execute(() -> {
+            // Release audio capture
+            if (remoteAudioCapture != null) {
+                remoteAudioCapture.release();
+                remoteAudioCapture = null;
+            }
+
             if (peerConnectionFactory != null) {
                 peerConnectionFactory.dispose();
                 peerConnectionFactory = null;
             }
-            
+
             PeerConnectionFactory.shutdownInternalTracer();
             Logger.d(TAG, "WebRTC released");
         });
-        
+
         executor.shutdown();
     }
     
@@ -785,7 +961,22 @@ public class WebRTCManager {
                 }
             });
         }
-        
+
+        // Capture audio deltas from data channel (response.audio.delta events)
+        // This is the PRIMARY method for capturing OpenAI's audio output
+        if (event.isAudioDelta() && audioCaptureEnabled && remoteAudioCapture != null) {
+            String audioDelta = event.getAudioDelta();
+            if (audioDelta != null && !audioDelta.isEmpty()) {
+                // Forward base64 audio to RemoteAudioCapture for decoding and processing
+                remoteAudioCapture.addAudioDelta(audioDelta);
+            }
+        }
+
+        // Handle audio done event - signal completion of audio stream
+        if (event.isAudioDone() && audioCaptureEnabled && remoteAudioCapture != null) {
+            remoteAudioCapture.complete();
+        }
+
         // Forward all events to callback
         mainHandler.post(() -> {
             if (callback != null) {
