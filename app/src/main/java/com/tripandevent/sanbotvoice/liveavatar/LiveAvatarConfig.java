@@ -18,21 +18,25 @@ public class LiveAvatarConfig {
     }
 
     /**
-     * Whether to use audio streaming mode
+     * Whether to use audio streaming mode (CUSTOM mode)
      *
-     * Based on LiveAvatar Web SDK analysis:
+     * IMPORTANT LIMITATION:
+     * Audio streaming (CUSTOM mode) requires audio data access from OpenAI.
+     * - In WebSocket mode: OpenAI sends audio as base64 data (response.output_audio.delta)
+     * - In WebRTC mode: Audio goes directly to speakers via RTP - NO DATA ACCESS
      *
-     * CUSTOM mode supports streaming external audio for lip sync:
-     * - Audio chunks (24kHz 16-bit PCM) are sent via WebSocket as base64
+     * This app uses WebRTC mode, so CUSTOM mode is NOT available.
+     * Must use FULL mode (text-based TTS) instead.
+     *
+     * CUSTOM mode (if available) would support:
+     * - Audio chunks (24kHz 16-bit PCM) sent via WebSocket as base64
      * - Format: {type: "agent.speak", event_id: "...", audio: "base64..."}
      * - End signal: {type: "agent.speak_end", event_id: "..."}
      * - Server performs lip sync rendering on the video stream
+     * - LOWEST LATENCY option
      *
-     * When true: Use external audio (from OpenAI) with server-side lip sync
-     * When false: Use text-based TTS (LiveAvatar's built-in TTS)
-     *
-     * Note: Audio streaming in CUSTOM mode DOES support lip sync -
-     * the server analyzes the audio and generates matching mouth movements.
+     * When true: Attempt CUSTOM mode (requires WebSocket mode for OpenAI)
+     * When false: Use FULL mode (text-based TTS via LiveKit data channel)
      */
     public static boolean useAudioStreaming() {
         return BuildConfig.LIVEAVATAR_AUDIO_STREAMING;
@@ -60,19 +64,20 @@ public class LiveAvatarConfig {
      * - Complete turnkey avatar interaction
      * - Built-in text-to-speech (voice_id, context_id, language)
      * - Avatar generates voice responses automatically
-     * - Use session.message() for text responses
-     * - REQUIRED when using WebRTC mode (audio not available as deltas)
+     * - Use avatar.speak_text for text responses via LiveKit data channel
+     * - Higher latency due to TTS generation
      *
      * CUSTOM mode:
      * - Bring your own TTS/audio integration
-     * - More control over voice synthesis
-     * - Use session.repeatAudio() with PCM 24kHz audio
-     * - Only works when you have raw PCM audio data (not WebRTC)
+     * - Stream audio directly via WebSocket with agent.speak
+     * - Audio format: PCM 16-bit 24kHz, base64 encoded
+     * - LOWEST LATENCY - no TTS generation needed
+     * - Requires WebSocket URL from backend
      */
     public static String getSessionMode() {
-        // Use FULL mode because WebRTC audio isn't available as delta events
-        // FULL mode uses LiveAvatar's built-in TTS for lip sync
-        return "FULL";
+        // Use CUSTOM mode when audio streaming is enabled (lowest latency)
+        // Use FULL mode when using text-based TTS
+        return useAudioStreaming() ? "CUSTOM" : "FULL";
     }
 
     // ============================================

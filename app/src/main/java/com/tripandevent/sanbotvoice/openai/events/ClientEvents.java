@@ -80,7 +80,7 @@ public class ClientEvents {
     
     /**
      * Create session.update event from SessionConfig
-     * Format follows OpenAI Realtime API GA WebRTC specification (/v1/realtime/calls)
+     * Uses GA WebSocket format with proper audio configuration
      */
     public static String sessionUpdate(SessionConfig config) {
         JsonObject event = new JsonObject();
@@ -88,59 +88,40 @@ public class ClientEvents {
         event.addProperty("event_id", generateEventId());
 
         JsonObject session = new JsonObject();
+        session.addProperty("type", "realtime");  // Required for GA WebSocket API
 
-        // GA WebRTC format requires session type
-        session.addProperty("type", "realtime");
-
-        // Instructions
         if (config.instructions != null) {
             session.addProperty("instructions", config.instructions);
         }
 
-        // Output modalities for GA format
+        // Output modalities (audio for voice response)
         JsonArray outputModalities = new JsonArray();
         outputModalities.add("audio");
-        outputModalities.add("text");
         session.add("output_modalities", outputModalities);
 
-        // Audio configuration (GA nested format)
+        // Audio configuration with nested format
         JsonObject audio = new JsonObject();
 
-        // Input audio configuration
+        // Input audio
         JsonObject input = new JsonObject();
         JsonObject inputFormat = new JsonObject();
-        inputFormat.addProperty("type", "audio/" + config.inputAudioFormat);
+        inputFormat.addProperty("type", "audio/pcm");
         inputFormat.addProperty("rate", config.sampleRate);
         input.add("format", inputFormat);
 
-        // Turn detection
+        // Turn detection (VAD) - semantic_vad for best barge-in
         JsonObject turnDetection = new JsonObject();
-        turnDetection.addProperty("type", "server_vad");
-        turnDetection.addProperty("threshold", 0.5);
-        turnDetection.addProperty("prefix_padding_ms", 300);
-        turnDetection.addProperty("silence_duration_ms", 500);
+        turnDetection.addProperty("type", "semantic_vad");
         input.add("turn_detection", turnDetection);
-
-        // Input transcription
-        JsonObject transcription = new JsonObject();
-        transcription.addProperty("model", "whisper-1");
-        input.add("transcription", transcription);
-
         audio.add("input", input);
 
-        // Output audio configuration
+        // Output audio
         JsonObject output = new JsonObject();
         JsonObject outputFormat = new JsonObject();
-        outputFormat.addProperty("type", "audio/" + config.outputAudioFormat);
+        outputFormat.addProperty("type", "audio/pcm");
         outputFormat.addProperty("rate", config.sampleRate);
         output.add("format", outputFormat);
         output.addProperty("voice", config.voice);
-
-        // Enable output transcription for LiveAvatar lip sync
-        JsonObject outputTranscription = new JsonObject();
-        outputTranscription.addProperty("model", "whisper-1");
-        output.add("transcription", outputTranscription);
-
         audio.add("output", output);
 
         session.add("audio", audio);
@@ -151,20 +132,15 @@ public class ClientEvents {
             session.addProperty("tool_choice", config.toolChoice);
         }
 
-        // Temperature
-        session.addProperty("temperature", 0.8);
-
-        // Max response output tokens
-        session.addProperty("max_response_output_tokens", 4096);
-
         event.add("session", session);
 
         return event.toString();
     }
-    
+
     /**
      * Create session.update with tools and robot motion support
-     * Format follows OpenAI Realtime API GA WebRTC specification (/v1/realtime/calls)
+     * Uses GA WebSocket format with proper audio configuration
+     * No instructions - let the backend/server handle prompting
      */
     public static String sessionUpdateWithTools(String instructions, JsonArray tools) {
         JsonObject event = new JsonObject();
@@ -172,107 +148,59 @@ public class ClientEvents {
         event.addProperty("event_id", generateEventId());
 
         JsonObject session = new JsonObject();
+        session.addProperty("type", "realtime");  // Required for GA WebSocket API
+        // No instructions - server handles this
 
-        // GA WebRTC format requires session type
-        session.addProperty("type", "realtime");
-
-        // Instructions - the system prompt
-        session.addProperty("instructions", instructions);
-
-        // Output modalities for GA format
+        // Output modalities (audio for voice response)
         JsonArray outputModalities = new JsonArray();
         outputModalities.add("audio");
-        outputModalities.add("text");
         session.add("output_modalities", outputModalities);
 
-        // Audio configuration (GA nested format)
+        // Audio configuration with nested format
         JsonObject audio = new JsonObject();
 
-        // Input audio configuration
+        // Input audio
         JsonObject input = new JsonObject();
         JsonObject inputFormat = new JsonObject();
         inputFormat.addProperty("type", "audio/pcm");
         inputFormat.addProperty("rate", 24000);
         input.add("format", inputFormat);
 
-        // Turn detection
+        // Turn detection (VAD) - critical for barge-in
         JsonObject turnDetection = new JsonObject();
-        turnDetection.addProperty("type", "server_vad");
-        turnDetection.addProperty("threshold", 0.5);
-        turnDetection.addProperty("prefix_padding_ms", 300);
-        turnDetection.addProperty("silence_duration_ms", 500);
+        turnDetection.addProperty("type", "semantic_vad");
         input.add("turn_detection", turnDetection);
-
-        // Input transcription
-        JsonObject transcription = new JsonObject();
-        transcription.addProperty("model", "whisper-1");
-        input.add("transcription", transcription);
-
         audio.add("input", input);
 
-        // Output audio configuration
+        // Output audio
         JsonObject output = new JsonObject();
         JsonObject outputFormat = new JsonObject();
         outputFormat.addProperty("type", "audio/pcm");
         outputFormat.addProperty("rate", 24000);
         output.add("format", outputFormat);
-        output.addProperty("voice", "alloy");
-
-        // Enable output transcription for LiveAvatar lip sync
-        JsonObject outputTranscription = new JsonObject();
-        outputTranscription.addProperty("model", "whisper-1");
-        output.add("transcription", outputTranscription);
-
+        output.addProperty("voice", "marin");
         audio.add("output", output);
 
         session.add("audio", audio);
 
-        // Tools
+        // Tools for function calling
         if (tools != null && tools.size() > 0) {
             session.add("tools", tools);
             session.addProperty("tool_choice", "auto");
         }
 
-        // Temperature for response generation
-        session.addProperty("temperature", 0.8);
-
-        // Max response output tokens
-        session.addProperty("max_response_output_tokens", 4096);
-
         event.add("session", session);
 
         return event.toString();
     }
-    
+
     /**
      * Create session.update with robot motion tools
+     * No instructions from client - server/backend handles prompting
      */
     public static String sessionUpdateWithRobotMotion(String baseInstructions) {
-        String robotInstructions = buildRobotAwareInstructions(baseInstructions);
         JsonArray tools = getAllTools();
-        return sessionUpdateWithTools(robotInstructions, tools);
-    }
-    
-    /**
-     * Build instructions that include robot motion guidance
-     */
-    private static String buildRobotAwareInstructions(String baseInstructions) {
-        StringBuilder sb = new StringBuilder();
-        sb.append(baseInstructions);
-        sb.append("\n\n");
-        sb.append("## Robot Interaction Guidelines\n");
-        sb.append("You are embodied in a Sanbot robot. Use gestures and emotions to make interactions natural:\n\n");
-        sb.append("- Use robot_gesture frequently: 'greet' when meeting, 'nod' for agreement, 'thinking' when processing, ");
-        sb.append("'excited' for enthusiasm, 'wave' for goodbye\n");
-        sb.append("- Use robot_emotion to show feelings: 'happy', 'thinking', 'curious', 'excited'\n");
-        sb.append("- Use robot_look to show attention: 'left', 'right', 'up', 'center'\n");
-        sb.append("- Call gestures naturally as you speak, not after\n");
-        sb.append("- Match gestures to conversation tone\n");
-        sb.append("\n## CRM Integration\n");
-        sb.append("- When customer provides contact info (name, phone, email), use save_customer_lead to save to CRM\n");
-        sb.append("- When customer asks about packages/tours, use get_packages to fetch available options\n");
-        sb.append("- Collect travel details progressively: destination, dates, travelers, hotel preference, budget\n");
-        return sb.toString();
+        return sessionUpdateWithTools(null, tools);
     }
     
     /**
@@ -689,30 +617,42 @@ public class ClientEvents {
     
     /**
      * Create response.create event
+     * Uses audio modality for voice conversation (text+audio combined is not supported)
      */
     public static String responseCreate() {
         JsonObject event = new JsonObject();
         event.addProperty("type", "response.create");
         event.addProperty("event_id", generateEventId());
+
+        // Note: OpenAI Realtime API only supports ['text'] OR ['audio'], not both combined
+        // Since we're in voice mode, use audio only
+        JsonObject response = new JsonObject();
+        JsonArray modalities = new JsonArray();
+        modalities.add("audio");
+        response.add("output_modalities", modalities);
+
+        event.add("response", response);
+
         return event.toString();
     }
-    
+
     /**
-     * Create response.create event with modalities
+     * Create response.create event with specified modality
+     * Note: OpenAI only supports ['text'] OR ['audio'], not both combined
+     * @param useAudio true for audio response, false for text response
      */
-    public static String responseCreate(boolean includeAudio, boolean includeText) {
+    public static String responseCreate(boolean useAudio) {
         JsonObject event = new JsonObject();
         event.addProperty("type", "response.create");
         event.addProperty("event_id", generateEventId());
-        
+
         JsonObject response = new JsonObject();
         JsonArray modalities = new JsonArray();
-        if (includeAudio) modalities.add("audio");
-        if (includeText) modalities.add("text");
-        response.add("modalities", modalities);
-        
+        modalities.add(useAudio ? "audio" : "text");
+        response.add("output_modalities", modalities);
+
         event.add("response", response);
-        
+
         return event.toString();
     }
     

@@ -20,6 +20,7 @@ import com.tripandevent.sanbotvoice.R;
 import com.tripandevent.sanbotvoice.config.AgentConfig;
 import com.tripandevent.sanbotvoice.audio.AudioBooster;
 import com.tripandevent.sanbotvoice.audio.AudioProcessor;
+import com.tripandevent.sanbotvoice.audio.MicrophoneCapture;
 import com.tripandevent.sanbotvoice.audio.SpeakerIdentifier;
 import com.tripandevent.sanbotvoice.analytics.ConversationAnalytics;
 import com.tripandevent.sanbotvoice.functions.FunctionExecutor;
@@ -29,12 +30,14 @@ import com.tripandevent.sanbotvoice.sanbot.SanbotMotionManager;
 import com.tripandevent.sanbotvoice.utils.Constants;
 import com.tripandevent.sanbotvoice.utils.Logger;
 import com.tripandevent.sanbotvoice.webrtc.WebRTCManager;
+import com.tripandevent.sanbotvoice.openai.OpenAIWebSocketManager;
 import com.tripandevent.sanbotvoice.heygen.HeyGenConfig;
 import com.tripandevent.sanbotvoice.heygen.HeyGenSessionManager;
 import com.tripandevent.sanbotvoice.heygen.HeyGenVideoManager;
 import com.tripandevent.sanbotvoice.liveavatar.LiveAvatarConfig;
 import com.tripandevent.sanbotvoice.liveavatar.LiveAvatarSessionManager;
 import com.tripandevent.sanbotvoice.liveavatar.AudioDeltaBuffer;
+import com.tripandevent.sanbotvoice.BuildConfig;
 
 import org.webrtc.AudioTrack;
 
@@ -42,7 +45,7 @@ import org.webrtc.AudioTrack;
  * Foreground service that manages the voice conversation lifecycle.
  * Integrates with Sanbot robot motion for interactive responses.
  */
-public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCallback {
+public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCallback, OpenAIWebSocketManager.OpenAICallback {
     
     private static final String TAG = "VoiceService";
     private static final int NOTIFICATION_ID = 1001;
@@ -53,6 +56,9 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
     
     // Core components
     private WebRTCManager webRTCManager;
+    private OpenAIWebSocketManager openAIWebSocketManager;
+    private MicrophoneCapture microphoneCapture;  // For WebSocket mode audio input
+    private boolean useWebSocketMode = false;  // true = WebSocket mode, false = WebRTC mode
     private FunctionExecutor functionExecutor;
     private AudioProcessor audioProcessor;
     private AudioBooster audioBooster;
@@ -112,10 +118,43 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
     public void onCreate() {
         super.onCreate();
         Logger.i(TAG, "VoiceAgentService created");
-        
-        // Initialize WebRTC manager
-        webRTCManager = new WebRTCManager(this, this);
-        webRTCManager.initialize();
+
+        // Check which mode to use based on configuration
+        useWebSocketMode = BuildConfig.OPENAI_USE_WEBSOCKET;
+        Logger.i(TAG, "OpenAI connection mode: %s", useWebSocketMode ? "WebSocket (CUSTOM mode enabled)" : "WebRTC (FULL mode)");
+
+        if (useWebSocketMode) {
+            // Initialize WebSocket manager for CUSTOM mode (direct audio streaming to avatar)
+            openAIWebSocketManager = new OpenAIWebSocketManager(this, this);
+            openAIWebSocketManager.initialize();
+
+            // Initialize microphone capture for WebSocket mode audio input
+            microphoneCapture = new MicrophoneCapture(this);
+            microphoneCapture.setCallback(new MicrophoneCapture.AudioDataCallback() {
+                @Override
+                public void onAudioData(byte[] pcmData) {
+                    // Send captured audio to OpenAI via WebSocket
+                    if (openAIWebSocketManager != null && openAIWebSocketManager.isConnected()) {
+                        openAIWebSocketManager.sendAudioInput(pcmData);
+                    }
+                }
+
+                @Override
+                public void onError(String error) {
+                    Logger.e(TAG, "Microphone capture error: %s", error);
+                    if (listener != null) {
+                        listener.onError("Microphone error: " + error);
+                    }
+                }
+            });
+
+            Logger.i(TAG, "Using WebSocket mode - CUSTOM mode for avatar is enabled");
+        } else {
+            // Initialize WebRTC manager for standard mode (text-based TTS for avatar)
+            webRTCManager = new WebRTCManager(this, this);
+            webRTCManager.initialize();
+            Logger.i(TAG, "Using WebRTC mode - avatar will use FULL mode (text-based TTS)");
+        }
         
         // Initialize function executor with context for robot motion
         functionExecutor = new FunctionExecutor();
@@ -265,6 +304,15 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
         }
 
         liveAvatarEnabled = true;
+
+        // PROACTIVE MUTING: Mute OpenAI local audio immediately when LiveAvatar is enabled
+        // This prevents echo if audio arrives before LiveAvatar WebSocket connects
+        // LiveAvatar will handle audio playback via its own stream
+        if (useWebSocketMode && openAIWebSocketManager != null) {
+            Logger.i(TAG, "Proactively muting local audio - LiveAvatar will handle playback");
+            openAIWebSocketManager.setLocalAudioMuted(true);
+        }
+
         liveAvatarSessionManager = new LiveAvatarSessionManager(this);
         liveAvatarSessionManager.setListener(new LiveAvatarSessionManager.SessionListener() {
             @Override
@@ -273,7 +321,11 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
                 // When LiveAvatar becomes connected, ensure OpenAI audio is muted
                 if (state == LiveAvatarSessionManager.SessionState.CONNECTED) {
                     Logger.i(TAG, "LiveAvatar CONNECTED - ensuring OpenAI audio is muted");
-                    if (webRTCManager != null) {
+                    // Mute OpenAI audio - method depends on connection mode
+                    if (useWebSocketMode && openAIWebSocketManager != null) {
+                        // In WebSocket mode, mute local playback (avatar plays audio via LiveKit)
+                        openAIWebSocketManager.setLocalAudioMuted(true);
+                    } else if (webRTCManager != null) {
                         webRTCManager.setRemoteAudioMuted(true);
                     }
                 }
@@ -282,7 +334,9 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
                     state == LiveAvatarSessionManager.SessionState.IDLE) {
                     if (liveAvatarEnabled) {
                         Logger.i(TAG, "LiveAvatar disconnected - unmuting OpenAI audio");
-                        if (webRTCManager != null) {
+                        if (useWebSocketMode && openAIWebSocketManager != null) {
+                            openAIWebSocketManager.setLocalAudioMuted(false);
+                        } else if (webRTCManager != null) {
                             webRTCManager.setRemoteAudioMuted(false);
                         }
                     }
@@ -295,7 +349,9 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
                 // Enable text buffer for lip sync now that stream is ready
                 liveAvatarSessionManager.enableTextBuffer();
                 // Ensure OpenAI audio stays muted (avatar will handle audio)
-                if (webRTCManager != null) {
+                if (useWebSocketMode && openAIWebSocketManager != null) {
+                    openAIWebSocketManager.setLocalAudioMuted(true);
+                } else if (webRTCManager != null) {
                     webRTCManager.setRemoteAudioMuted(true);
                 }
                 // Configure audio booster for LiveAvatar TTS playback
@@ -339,8 +395,10 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
                 Logger.e(TAG, "LiveAvatar error: %s", error);
                 liveAvatarEnabled = false;
                 // Unmute OpenAI audio since avatar failed - let user hear the agent
-                if (webRTCManager != null) {
-                    Logger.i(TAG, "Unmuting OpenAI audio - LiveAvatar failed, falling back to direct audio");
+                Logger.i(TAG, "Unmuting OpenAI audio - LiveAvatar failed, falling back to direct audio");
+                if (useWebSocketMode && openAIWebSocketManager != null) {
+                    openAIWebSocketManager.setLocalAudioMuted(false);
+                } else if (webRTCManager != null) {
                     webRTCManager.setRemoteAudioMuted(false);
                 }
                 if (listener != null) {
@@ -370,15 +428,26 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
     public void onDestroy() {
         Logger.i(TAG, "VoiceAgentService destroyed");
         stopConversation();
-        
+
+        // Cleanup OpenAI connection (WebSocket or WebRTC)
+        if (openAIWebSocketManager != null) {
+            openAIWebSocketManager.release();
+            openAIWebSocketManager = null;
+        }
         if (webRTCManager != null) {
             webRTCManager.disconnect();
         }
-        
+
+        // Cleanup microphone capture (WebSocket mode)
+        if (microphoneCapture != null) {
+            microphoneCapture.stop();
+            microphoneCapture = null;
+        }
+
         if (audioProcessor != null) {
             audioProcessor.release();
         }
-        
+
         if (audioBooster != null) {
             audioBooster.resetAudio();
         }
@@ -521,7 +590,13 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
         sessionConfigured = false;
         
         analytics.startSession();
-        webRTCManager.connect();
+
+        // Connect using the appropriate manager based on mode
+        if (useWebSocketMode && openAIWebSocketManager != null) {
+            openAIWebSocketManager.connect();
+        } else if (webRTCManager != null) {
+            webRTCManager.connect();
+        }
     }
     
     public void stopConversation() {
@@ -530,6 +605,12 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
         }
 
         Logger.i(TAG, "Stopping conversation...");
+
+        // Stop microphone capture (WebSocket mode)
+        if (microphoneCapture != null && microphoneCapture.isCapturing()) {
+            microphoneCapture.stop();
+            Logger.d(TAG, "Microphone capture stopped");
+        }
 
         // Stop HeyGen avatar session
         if (heyGenSessionManager != null) {
@@ -551,22 +632,27 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
             Logger.i(TAG, "Session summary: %s", summary.toString());
         }
 
-        webRTCManager.disconnect();
-        
+        // Disconnect using the appropriate manager based on mode
+        if (useWebSocketMode && openAIWebSocketManager != null) {
+            openAIWebSocketManager.disconnect();
+        } else if (webRTCManager != null) {
+            webRTCManager.disconnect();
+        }
+
         if (audioProcessor != null) {
             audioProcessor.release();
         }
-        
+
         // Reset audio to original settings
         if (audioBooster != null) {
             audioBooster.resetAudio();
         }
-        
+
         // Reset robot to neutral
         if (sanbotMotionManager != null && sanbotMotionManager.isAvailable()) {
             mainHandler.postDelayed(() -> sanbotMotionManager.resetAll(), 1500);
         }
-        
+
         logDisconnect("user_initiated");
         setState(ConversationState.IDLE);
     }
@@ -662,34 +748,29 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
     }
     
     /**
-     * Configure the OpenAI session with tools and instructions
+     * Configure the OpenAI session with tools (no instructions from client)
+     * Instructions/prompting is handled by the backend server
      */
     private void configureSession() {
         if (sessionConfigured) {
             Logger.d(TAG, "Session already configured");
             return;
         }
-        
-        Logger.d(TAG, "Configuring session with robot motion support...");
 
-        // Get instructions from config (builds if not already set)
-        String instructions = getAiInstructions();
-        Logger.d(TAG, "Using AI instructions (length: %d)", instructions.length());
+        Logger.d(TAG, "Configuring session with tools (no client instructions)...");
 
-        // Create session update with robot-aware instructions
-        String sessionUpdate = ClientEvents.sessionUpdateWithRobotMotion(instructions);
-        
-        webRTCManager.sendEvent(sessionUpdate);
-        sessionConfigured = true;
-        
-        Logger.i(TAG, "Session configured with robot motion tools");
-        
-        // Perform greeting gesture
-        if (sanbotMotionManager != null && sanbotMotionManager.isAvailable()) {
-            mainHandler.postDelayed(() -> {
-                sanbotMotionManager.greet();
-            }, 500);
+        // Create session update with tools only - no instructions from client
+        String sessionUpdate = ClientEvents.sessionUpdateWithRobotMotion(null);
+
+        // Send using the appropriate manager based on mode
+        if (useWebSocketMode && openAIWebSocketManager != null) {
+            openAIWebSocketManager.sendEvent(sessionUpdate);
+        } else if (webRTCManager != null) {
+            webRTCManager.sendEvent(sessionUpdate);
         }
+        sessionConfigured = true;
+
+        Logger.i(TAG, "Session configured with tools");
     }
     
     @Override
@@ -739,6 +820,14 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
         } else if (event.isSessionUpdated()) {
             Logger.d(TAG, "Session updated successfully");
             setState(ConversationState.READY);
+
+            // Start microphone capture for WebSocket mode
+            if (useWebSocketMode && microphoneCapture != null && !microphoneCapture.isCapturing()) {
+                Logger.i(TAG, "Starting microphone capture for WebSocket mode...");
+                if (!microphoneCapture.start()) {
+                    Logger.e(TAG, "Failed to start microphone capture");
+                }
+            }
         } else if (event.isSpeechStarted()) {
             setState(ConversationState.LISTENING);
         } else if (event.isSpeechStopped()) {
@@ -829,7 +918,8 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
     
     @Override
     public void onRemoteAudioTrack(AudioTrack track) {
-        Logger.d(TAG, "Remote audio track received - AI is speaking");
+        // This callback is only called in WebRTC mode
+        Logger.d(TAG, "Remote audio track received - AI is speaking (WebRTC mode)");
         setState(ConversationState.SPEAKING);
 
         // When LiveAvatar is ENABLED (not just connected), mute OpenAI's WebRTC audio
@@ -838,7 +928,9 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
         // The LiveAvatar session connects asynchronously and audio track arrives before it's ready
         if (liveAvatarEnabled && liveAvatarSessionManager != null) {
             Logger.i(TAG, "Muting OpenAI audio - LiveAvatar will handle audio playback");
-            webRTCManager.setRemoteAudioMuted(true);
+            if (webRTCManager != null) {
+                webRTCManager.setRemoteAudioMuted(true);
+            }
             // Enable text buffer for lip sync
             liveAvatarSessionManager.enableTextBuffer();
         } else {
@@ -850,7 +942,38 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
             }
         }
     }
-    
+
+    // ============================================
+    // OpenAIWebSocketManager.OpenAICallback - Audio Data (CUSTOM mode)
+    // ============================================
+
+    /**
+     * Called when audio data is received from OpenAI (WebSocket mode only).
+     * This enables CUSTOM mode for LiveAvatar - direct audio streaming for lip sync.
+     *
+     * In WebSocket mode:
+     * 1. OpenAI sends audio as base64 data (response.output_audio.delta)
+     * 2. We decode and play locally via AudioTrack (handled by OpenAIWebSocketManager)
+     * 3. We forward the same audio to LiveAvatar for lip sync (LOWEST LATENCY)
+     *
+     * @param pcmData Raw PCM audio bytes (24kHz, 16-bit signed, mono)
+     */
+    @Override
+    public void onAudioData(byte[] pcmData) {
+        // Forward audio to LiveAvatar for CUSTOM mode lip sync
+        if (liveAvatarEnabled && liveAvatarSessionManager != null &&
+            liveAvatarSessionManager.isConnected() && LiveAvatarConfig.useAudioStreaming()) {
+            // Send PCM audio directly to LiveAvatar
+            liveAvatarSessionManager.sendAudioBinary(pcmData);
+            Logger.d(TAG, "Audio data forwarded to LiveAvatar (%d bytes)", pcmData.length);
+        }
+
+        // Update state to SPEAKING if not already
+        if (currentState != ConversationState.SPEAKING) {
+            setState(ConversationState.SPEAKING);
+        }
+    }
+
     // ============================================
     // Event Handlers
     // ============================================
@@ -988,19 +1111,19 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
                 @Override
                 public void onFunctionResult(String callId, String result) {
                     Logger.d(TAG, "Function %s succeeded", funcInfo.name);
-                    webRTCManager.sendFunctionResult(callId, result);
-                    
+                    sendFunctionResultToOpenAI(callId, result);
+
                     // Only update state for non-robot functions
                     if (!isRobotMotion && currentState == ConversationState.EXECUTING_FUNCTION) {
                         setState(ConversationState.READY);
                     }
                 }
-                
+
                 @Override
                 public void onFunctionError(String callId, String error) {
                     Logger.e(TAG, "Function %s failed: %s", funcInfo.name, error);
-                    webRTCManager.sendFunctionResult(callId, "{\"error\": \"" + error + "\"}");
-                    
+                    sendFunctionResultToOpenAI(callId, "{\"error\": \"" + error + "\"}");
+
                     if (!isRobotMotion && currentState == ConversationState.EXECUTING_FUNCTION) {
                         setState(ConversationState.READY);
                     }
@@ -1008,21 +1131,32 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
             }
         );
     }
-    
+
     private void handleFunctionCallFromResponse(ServerEvents.ParsedEvent event) {
-        functionExecutor.handleFunctionCall(event, currentSessionId, 
+        functionExecutor.handleFunctionCall(event, currentSessionId,
             new FunctionExecutor.ExecutionCallback() {
                 @Override
                 public void onFunctionResult(String callId, String result) {
-                    webRTCManager.sendFunctionResult(callId, result);
+                    sendFunctionResultToOpenAI(callId, result);
                 }
-                
+
                 @Override
                 public void onFunctionError(String callId, String error) {
-                    webRTCManager.sendFunctionResult(callId, "{\"error\": \"" + error + "\"}");
+                    sendFunctionResultToOpenAI(callId, "{\"error\": \"" + error + "\"}");
                 }
             }
         );
+    }
+
+    /**
+     * Helper method to send function results to OpenAI using the appropriate manager
+     */
+    private void sendFunctionResultToOpenAI(String callId, String result) {
+        if (useWebSocketMode && openAIWebSocketManager != null) {
+            openAIWebSocketManager.sendFunctionCallOutput(callId, result);
+        } else if (webRTCManager != null) {
+            webRTCManager.sendFunctionResult(callId, result);
+        }
     }
     
     private void handleServerError(ServerEvents.ParsedEvent event) {

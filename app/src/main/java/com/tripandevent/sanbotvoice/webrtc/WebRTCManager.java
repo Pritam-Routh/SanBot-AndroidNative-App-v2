@@ -83,6 +83,7 @@ public class WebRTCManager {
         void onSpeechStopped();
         void onRemoteAudioTrack(AudioTrack track);
     }
+
     
     public WebRTCManager(Context context, WebRTCCallback callback) {
         this.context = context.getApplicationContext();
@@ -90,6 +91,7 @@ public class WebRTCManager {
         this.mainHandler = new Handler(Looper.getMainLooper());
         this.executor = Executors.newSingleThreadExecutor();
     }
+
     
     /**
      * Initialize WebRTC components.
@@ -108,6 +110,9 @@ public class WebRTCManager {
                 PeerConnectionFactory.initialize(initOptions);
                 
                 // Create audio device module
+                // Note: WebRTC mode doesn't provide output audio samples as data
+                // Audio goes directly from RTP to AudioTrack for playback
+                // For CUSTOM mode (audio streaming to avatar), we need WebSocket mode instead
                 AudioDeviceModule audioDeviceModule = JavaAudioDeviceModule.builder(context)
                     .setUseHardwareAcousticEchoCanceler(WebRTCConfig.AudioConstraints.ECHO_CANCELLATION)
                     .setUseHardwareNoiseSuppressor(WebRTCConfig.AudioConstraints.NOISE_SUPPRESSION)

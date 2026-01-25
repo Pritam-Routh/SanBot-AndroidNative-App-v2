@@ -285,6 +285,22 @@ public class ServerEvents {
             if (!isAudioDelta()) return null;
             return getStringOrNull(raw, "delta");
         }
+
+        /**
+         * Get item_id from audio delta event (needed for truncation)
+         */
+        public String getAudioItemId() {
+            if (!isAudioDelta() && !isAudioDone()) return null;
+            return getStringOrNull(raw, "item_id");
+        }
+
+        /**
+         * Get content_index from audio delta event (needed for truncation)
+         */
+        public int getAudioContentIndex() {
+            if (!isAudioDelta() && !isAudioDone()) return 0;
+            return getIntOrDefault(raw, "content_index", 0);
+        }
         
         // ============================================
         // FUNCTION CALL EVENTS

@@ -34,6 +34,11 @@ android {
         buildConfigField "boolean", "ENABLE_LIVEAVATAR", "${project.findProperty('ENABLE_LIVEAVATAR') ?: 'false'}"
         buildConfigField "String", "LIVEAVATAR_AVATAR_ID", "\"${project.findProperty('LIVEAVATAR_AVATAR_ID') ?: ''}\""
         buildConfigField "boolean", "LIVEAVATAR_AUDIO_STREAMING", "${project.findProperty('LIVEAVATAR_AUDIO_STREAMING') ?: 'true'}"
+
+        // OpenAI Connection Mode
+        // true = WebSocket mode (enables CUSTOM mode for avatar with audio streaming)
+        // false = WebRTC mode (native audio handling, avatar uses text-based TTS)
+        buildConfigField "boolean", "OPENAI_USE_WEBSOCKET", "${project.findProperty('OPENAI_USE_WEBSOCKET') ?: 'false'}"
     }
 
     buildTypes {
