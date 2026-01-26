@@ -5,7 +5,9 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
+import android.content.Context;
 import android.content.Intent;
+import android.media.AudioManager;
 import android.os.Binder;
 import android.os.Build;
 import android.os.Handler;
@@ -67,6 +69,9 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
     private LiveAvatarSessionManager liveAvatarSessionManager;
     private boolean liveAvatarEnabled = false;
 
+    // Standalone mode flag (HeyGen FULL mode, no OpenAI WebRTC)
+    private boolean isStandaloneMode = false;
+
     // State
     private ConversationState currentState = ConversationState.IDLE;
     private VoiceAgentListener listener;
@@ -79,6 +84,20 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
     private StringBuilder currentTranscript = new StringBuilder();
     private StringBuilder userTranscript = new StringBuilder();
     private StringBuilder aiTranscript = new StringBuilder();
+
+    // Standalone mode: echo loop prevention and debounced speak_response
+    private boolean avatarIsSpeaking = false;
+    private String pendingTranscription = null;
+    private final Runnable speakResponseRunnable = () -> {
+        String text = pendingTranscription;
+        pendingTranscription = null;
+        if (text != null && !text.isEmpty() && isStandaloneMode
+                && liveAvatarSessionManager != null && liveAvatarSessionManager.isConnected()) {
+            Logger.i(TAG, "Sending debounced speak_response: %s", text);
+            liveAvatarSessionManager.speakResponse(text);
+        }
+    };
+    private static final long SPEAK_RESPONSE_DEBOUNCE_MS = 800;
 
     // Agent configuration (can be customized from client side)
     private AgentConfig agentConfig = AgentConfig.getDefault();
@@ -111,10 +130,20 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
     public void onCreate() {
         super.onCreate();
         Logger.i(TAG, "VoiceAgentService created");
-        
-        // Initialize WebRTC manager
-        webRTCManager = new WebRTCManager(this, this);
-        webRTCManager.initialize();
+
+        // Determine mode first (before any initialization)
+        isStandaloneMode = LiveAvatarConfig.isStandaloneMode();
+        Logger.i(TAG, "Standalone HeyGen FULL mode: %b", isStandaloneMode);
+
+        // Initialize WebRTC manager only when OpenAI is enabled
+        if (!isStandaloneMode) {
+            Logger.i(TAG, "OpenAI WebRTC enabled - initializing WebRTCManager");
+            webRTCManager = new WebRTCManager(this, this);
+            webRTCManager.initialize();
+        } else {
+            Logger.i(TAG, "OpenAI WebRTC DISABLED - standalone HeyGen FULL mode");
+            webRTCManager = null;
+        }
         
         // Initialize function executor with context for robot motion
         functionExecutor = new FunctionExecutor();
@@ -128,51 +157,56 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
         
         // Initialize audio processor
         audioProcessor = new AudioProcessor(this);
-        audioProcessor.setCallback(new AudioProcessor.AudioProcessorCallback() {
-            @Override
-            public void onSpeechStart() {
-                Logger.d(TAG, "Local speech started");
-                if (currentState == ConversationState.READY) {
-                    setState(ConversationState.LISTENING);
-                    // Show listening gesture
-                    if (sanbotMotionManager != null && sanbotMotionManager.isAvailable()) {
-                        sanbotMotionManager.showListening();
+
+        // Only wire local speech detection when OpenAI WebRTC is active.
+        // In standalone mode, HeyGen VAD events drive state transitions instead.
+        if (!isStandaloneMode) {
+            audioProcessor.setCallback(new AudioProcessor.AudioProcessorCallback() {
+                @Override
+                public void onSpeechStart() {
+                    Logger.d(TAG, "Local speech started");
+                    if (currentState == ConversationState.READY) {
+                        setState(ConversationState.LISTENING);
+                        // Show listening gesture
+                        if (sanbotMotionManager != null && sanbotMotionManager.isAvailable()) {
+                            sanbotMotionManager.showListening();
+                        }
+                    }
+
+                    // Interrupt avatar when user starts speaking (barge-in)
+                    if (heyGenEnabled && heyGenSessionManager != null && heyGenSessionManager.isReady()) {
+                        heyGenSessionManager.interrupt();
+                    }
+                    if (liveAvatarEnabled && liveAvatarSessionManager != null && liveAvatarSessionManager.isConnected()) {
+                        liveAvatarSessionManager.interrupt();
                     }
                 }
 
-                // Interrupt avatar when user starts speaking (barge-in)
-                if (heyGenEnabled && heyGenSessionManager != null && heyGenSessionManager.isReady()) {
-                    heyGenSessionManager.interrupt();
-                }
-                if (liveAvatarEnabled && liveAvatarSessionManager != null && liveAvatarSessionManager.isConnected()) {
-                    liveAvatarSessionManager.interrupt();
-                }
-            }
-            
-            @Override
-            public void onSpeechEnd() {
-                Logger.d(TAG, "Local speech ended");
-                if (currentState == ConversationState.LISTENING) {
-                    setState(ConversationState.PROCESSING);
-                    // Show thinking gesture while processing
-                    if (sanbotMotionManager != null && sanbotMotionManager.isAvailable()) {
-                        sanbotMotionManager.showThinking();
+                @Override
+                public void onSpeechEnd() {
+                    Logger.d(TAG, "Local speech ended");
+                    if (currentState == ConversationState.LISTENING) {
+                        setState(ConversationState.PROCESSING);
+                        // Show thinking gesture while processing
+                        if (sanbotMotionManager != null && sanbotMotionManager.isAvailable()) {
+                            sanbotMotionManager.showThinking();
+                        }
                     }
                 }
-            }
-            
-            @Override
-            public void onAudioLevel(float level) {
-                if (listener != null) {
-                    listener.onAudioLevel(level);
+
+                @Override
+                public void onAudioLevel(float level) {
+                    if (listener != null) {
+                        listener.onAudioLevel(level);
+                    }
                 }
-            }
-            
-            @Override
-            public void onError(String error) {
-                Logger.e(TAG, "Audio processor error: %s", error);
-            }
-        });
+
+                @Override
+                public void onError(String error) {
+                    Logger.e(TAG, "Audio processor error: %s", error);
+                }
+            });
+        }
         
         // Initialize speaker identifier
         speakerIdentifier = new SpeakerIdentifier(this);
@@ -269,20 +303,30 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
             @Override
             public void onStateChanged(LiveAvatarSessionManager.SessionState state) {
                 Logger.d(TAG, "LiveAvatar state: %s", state);
-                // OpenAI audio plays directly to speaker - LiveAvatar audio is muted for lip sync only
             }
 
             @Override
             public void onStreamReady() {
-                Logger.i(TAG, "LiveAvatar stream ready - avatar video for lip sync, OpenAI audio to speaker");
-                // Enable text buffer for lip sync now that stream is ready
-                liveAvatarSessionManager.enableTextBuffer();
-                // FORCE reconfigure audio after LiveKit connects
-                // LiveKit may have overridden audio settings, so we need to reapply them
-                if (audioBooster != null) {
+                Logger.i(TAG, "LiveAvatar stream ready");
+
+                if (isStandaloneMode) {
+                    // In standalone mode, stream ready means we're ready for conversation
+                    // HeyGen handles everything from here
+                    Logger.i(TAG, "Standalone mode: Stream ready - transitioning to READY state");
+                    setState(ConversationState.READY);
+                } else {
+                    // Legacy mode: just enable text buffer for lip sync
+                    liveAvatarSessionManager.enableTextBuffer();
+                }
+
+                // Force reconfigure audio after LiveKit connects (legacy mode only)
+                // In standalone mode, LiveKit owns the audio session for mic capture
+                // DO NOT steal audio focus or it will kill LiveKit's microphone
+                if (audioBooster != null && !isStandaloneMode) {
                     audioBooster.forceReconfigure();
                     Logger.i(TAG, "Audio FORCE reconfigured after LiveKit: %s", audioBooster.getVolumeInfo());
                 }
+
                 if (listener != null) {
                     listener.onAvatarVideoReady();
                 }
@@ -295,40 +339,128 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
 
             @Override
             public void onUserTranscription(String text) {
-                Logger.d(TAG, "LiveAvatar user transcription: %s", text);
+                Logger.i(TAG, "LiveAvatar user transcription: %s", text);
+                if (isStandaloneMode) {
+                    // Ignore transcriptions while avatar is speaking (echo prevention)
+                    if (avatarIsSpeaking) {
+                        Logger.d(TAG, "Ignoring transcription while avatar is speaking (echo): %s", text);
+                        return;
+                    }
+                    // Display user transcript in UI
+                    userTranscript.append("User: ").append(text).append("\n");
+                    messageCount++;
+                    if (listener != null) {
+                        listener.onTranscript(text, true);
+                    }
+                    if (analytics != null) {
+                        analytics.recordUserMessage();
+                    }
+                    // Debounced speak_response: accumulate transcription text,
+                    // send ONE speak_response after 800ms of no new transcriptions.
+                    pendingTranscription = text;
+                    mainHandler.removeCallbacks(speakResponseRunnable);
+                    mainHandler.postDelayed(speakResponseRunnable, SPEAK_RESPONSE_DEBOUNCE_MS);
+                }
             }
 
             @Override
             public void onAvatarTranscription(String text) {
                 Logger.d(TAG, "LiveAvatar avatar transcription: %s", text);
+                if (isStandaloneMode) {
+                    // Display AI transcript in UI
+                    aiTranscript.append("AI: ").append(text).append("\n");
+                    if (listener != null) {
+                        listener.onTranscript(text, false);
+                    }
+                    if (analytics != null) {
+                        analytics.recordAiResponse();
+                    }
+                }
             }
 
             @Override
             public void onAvatarSpeakStarted() {
-                Logger.d(TAG, "LiveAvatar speak started");
+                Logger.i(TAG, "LiveAvatar speak started");
+                if (isStandaloneMode) {
+                    avatarIsSpeaking = true;
+                    setState(ConversationState.SPEAKING);
+                    // Cancel any pending speak_response to prevent echo
+                    mainHandler.removeCallbacks(speakResponseRunnable);
+                    pendingTranscription = null;
+                    // Stop listening while avatar speaks to prevent echo loop
+                    // (mic picks up avatar audio → re-transcribed → triggers new response)
+                    if (liveAvatarSessionManager != null) {
+                        liveAvatarSessionManager.stopListening();
+                    }
+                }
             }
 
             @Override
             public void onAvatarSpeakEnded() {
-                Logger.d(TAG, "LiveAvatar speak ended");
+                Logger.i(TAG, "LiveAvatar speak ended");
+                if (isStandaloneMode) {
+                    avatarIsSpeaking = false;
+                    setState(ConversationState.READY);
+                    // Resume listening now that avatar finished speaking
+                    if (liveAvatarSessionManager != null) {
+                        liveAvatarSessionManager.startListening();
+                    }
+                }
+            }
+
+            @Override
+            public void onUserSpeakStarted() {
+                Logger.d(TAG, "LiveAvatar user speak started (HeyGen VAD)");
+                if (isStandaloneMode) {
+                    setState(ConversationState.LISTENING);
+                    // Do NOT send avatar.interrupt here - HeyGen FULL mode handles
+                    // barge-in internally. Sending interrupt disrupts the processing pipeline.
+                    // Show listening gesture
+                    if (sanbotMotionManager != null && sanbotMotionManager.isAvailable()) {
+                        sanbotMotionManager.showListening();
+                    }
+                }
+            }
+
+            @Override
+            public void onUserSpeakEnded() {
+                Logger.d(TAG, "LiveAvatar user speak ended (HeyGen VAD)");
+                if (isStandaloneMode) {
+                    setState(ConversationState.PROCESSING);
+                    // Show thinking gesture while processing
+                    if (sanbotMotionManager != null && sanbotMotionManager.isAvailable()) {
+                        sanbotMotionManager.showThinking();
+                    }
+                }
             }
 
             @Override
             public void onError(String error) {
                 Logger.e(TAG, "LiveAvatar error: %s", error);
                 liveAvatarEnabled = false;
-                // Unmute OpenAI audio since avatar failed - let user hear the agent
-                if (webRTCManager != null) {
+
+                if (!isStandaloneMode && webRTCManager != null) {
+                    // Legacy mode: unmute OpenAI audio since avatar failed
                     Logger.i(TAG, "Unmuting OpenAI audio - LiveAvatar failed, falling back to direct audio");
                     webRTCManager.setRemoteAudioMuted(false);
                 }
+
+                if (isStandaloneMode) {
+                    // Standalone mode: LiveAvatar failure is critical - set error state
+                    setState(ConversationState.ERROR);
+                }
+
                 if (listener != null) {
                     listener.onAvatarError(error);
                 }
             }
         });
 
-        Logger.i(TAG, "LiveAvatar support initialized (text-based TTS mode)");
+        if (isStandaloneMode) {
+            Logger.i(TAG, "LiveAvatar support initialized (STANDALONE FULL mode - no OpenAI)");
+        } else {
+            Logger.i(TAG, "LiveAvatar support initialized (text-based TTS lip-sync mode)");
+        }
     }
 
     @Override
@@ -487,19 +619,67 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
             Logger.w(TAG, "Cannot start conversation in state: %s", currentState);
             return;
         }
-        
-        Logger.i(TAG, "Starting conversation...");
+
+        Logger.i(TAG, "Starting conversation... (standalone=%b)", isStandaloneMode);
         setState(ConversationState.CONNECTING);
-        
+
         currentTranscript = new StringBuilder();
         userTranscript = new StringBuilder();
         aiTranscript = new StringBuilder();
         conversationStartTime = System.currentTimeMillis();
         messageCount = 0;
         sessionConfigured = false;
-        
+
         analytics.startSession();
-        webRTCManager.connect();
+
+        if (isStandaloneMode) {
+            // STANDALONE MODE: Only start LiveAvatar session
+            // HeyGen handles everything: mic capture via LiveKit, STT, LLM, TTS, video
+            startStandaloneSession();
+        } else {
+            // LEGACY MODE: Connect to OpenAI first, then start LiveAvatar in parallel
+            webRTCManager.connect();
+        }
+    }
+
+    /**
+     * Start conversation in standalone HeyGen FULL mode.
+     * No OpenAI WebRTC connection needed - HeyGen handles the entire pipeline.
+     */
+    private void startStandaloneSession() {
+        Logger.i(TAG, "Starting standalone HeyGen FULL session...");
+
+        // DO NOT use AudioBooster in standalone mode!
+        // LiveKit manages its own audio session for mic capture.
+        // AudioBooster.requestAudioFocus() steals focus from LiveKit, killing mic input.
+        // Just maximize volume streams without requesting audio focus or changing audio mode.
+        AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+        if (am != null) {
+            am.setStreamVolume(AudioManager.STREAM_VOICE_CALL,
+                    am.getStreamMaxVolume(AudioManager.STREAM_VOICE_CALL), 0);
+            am.setStreamVolume(AudioManager.STREAM_MUSIC,
+                    am.getStreamMaxVolume(AudioManager.STREAM_MUSIC), 0);
+            Logger.i(TAG, "Standalone mode: Volume maximized (no audio focus request)");
+        }
+
+        // Start LiveAvatar session
+        if (liveAvatarEnabled && liveAvatarSessionManager != null) {
+            Logger.d(TAG, "Starting LiveAvatar session in standalone FULL mode...");
+            liveAvatarSessionManager.startSession(LiveAvatarConfig.getAvatarId());
+        } else {
+            Logger.e(TAG, "Cannot start standalone session - LiveAvatar not enabled");
+            setState(ConversationState.ERROR);
+            if (listener != null) {
+                listener.onError("LiveAvatar is not enabled for standalone mode");
+            }
+        }
+
+        // Perform greeting gesture
+        if (sanbotMotionManager != null && sanbotMotionManager.isAvailable()) {
+            mainHandler.postDelayed(() -> {
+                sanbotMotionManager.greet();
+            }, 500);
+        }
     }
     
     public void stopConversation() {
@@ -508,6 +688,10 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
         }
 
         Logger.i(TAG, "Stopping conversation...");
+
+        // Cancel any pending speak_response
+        mainHandler.removeCallbacks(speakResponseRunnable);
+        pendingTranscription = null;
 
         // Stop HeyGen avatar session
         if (heyGenSessionManager != null) {
@@ -529,7 +713,9 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
             Logger.i(TAG, "Session summary: %s", summary.toString());
         }
 
-        webRTCManager.disconnect();
+        if (webRTCManager != null) {
+            webRTCManager.disconnect();
+        }
         
         if (audioProcessor != null) {
             audioProcessor.release();
@@ -826,6 +1012,10 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
     }
     
     private void handleTranscriptDelta(ServerEvents.ParsedEvent event) {
+        if (isStandaloneMode) {
+            // In standalone mode, HeyGen handles its own text/speech
+            return;
+        }
         String delta = event.getTranscriptDelta();
         if (delta != null && !delta.isEmpty()) {
             currentTranscript.append(delta);
@@ -892,6 +1082,10 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
     }
     
     private void handleFunctionCall(ServerEvents.ParsedEvent event) {
+        if (isStandaloneMode) {
+            Logger.w(TAG, "Function calling not supported in standalone HeyGen mode");
+            return;
+        }
         ServerEvents.FunctionCallInfo funcInfo = event.getFunctionCallInfo();
         if (funcInfo == null) return;
         
@@ -935,7 +1129,11 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
     }
     
     private void handleFunctionCallFromResponse(ServerEvents.ParsedEvent event) {
-        functionExecutor.handleFunctionCall(event, currentSessionId, 
+        if (isStandaloneMode || webRTCManager == null) {
+            Logger.w(TAG, "Function calling not supported in standalone HeyGen mode");
+            return;
+        }
+        functionExecutor.handleFunctionCall(event, currentSessionId,
             new FunctionExecutor.ExecutionCallback() {
                 @Override
                 public void onFunctionResult(String callId, String result) {

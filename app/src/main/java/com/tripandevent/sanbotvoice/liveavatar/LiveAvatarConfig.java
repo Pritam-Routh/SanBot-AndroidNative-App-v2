@@ -19,11 +19,39 @@ public class LiveAvatarConfig {
     }
 
     /**
+     * Whether OpenAI WebRTC is enabled.
+     * When false, LiveAvatar operates in standalone FULL mode.
+     */
+    public static boolean isOpenAIWebRTCEnabled() {
+        return BuildConfig.ENABLE_OPENAI_WEBRTC;
+    }
+
+    /**
+     * Whether LiveAvatar is in standalone mode (no OpenAI).
+     * In standalone mode:
+     * - LiveAvatar handles STT, LLM, TTS, video, and audio
+     * - Local mic audio is published to LiveKit room
+     * - Avatar audio is NOT muted
+     * - State is driven by HeyGen server events
+     */
+    public static boolean isStandaloneMode() {
+        return isEnabled() && !isOpenAIWebRTCEnabled();
+    }
+
+    /**
      * Default avatar ID to use
      */
     public static String getAvatarId() {
         String avatarId = BuildConfig.LIVEAVATAR_AVATAR_ID;
         return (avatarId != null && !avatarId.isEmpty()) ? avatarId : null;
+    }
+
+    /**
+     * HeyGen context ID for FULL mode LLM (system prompt / knowledge base)
+     */
+    public static String getContextId() {
+        String contextId = BuildConfig.LIVEAVATAR_CONTEXT_ID;
+        return (contextId != null && !contextId.isEmpty()) ? contextId : null;
     }
 
     /**

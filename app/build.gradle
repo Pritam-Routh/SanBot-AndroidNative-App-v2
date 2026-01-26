@@ -33,6 +33,10 @@ android {
         // LiveAvatar Configuration (Text-Based TTS for Lip Sync)
         buildConfigField "boolean", "ENABLE_LIVEAVATAR", "${project.findProperty('ENABLE_LIVEAVATAR') ?: 'false'}"
         buildConfigField "String", "LIVEAVATAR_AVATAR_ID", "\"${project.findProperty('LIVEAVATAR_AVATAR_ID') ?: ''}\""
+        buildConfigField "String", "LIVEAVATAR_CONTEXT_ID", "\"${project.findProperty('LIVEAVATAR_CONTEXT_ID') ?: ''}\""
+
+        // OpenAI WebRTC Feature Flag (false = standalone HeyGen FULL mode, no OpenAI needed)
+        buildConfigField "boolean", "ENABLE_OPENAI_WEBRTC", "${project.findProperty('ENABLE_OPENAI_WEBRTC') ?: 'true'}"
     }
 
     buildTypes {

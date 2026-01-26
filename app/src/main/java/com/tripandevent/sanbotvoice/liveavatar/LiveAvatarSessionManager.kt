@@ -102,6 +102,10 @@ class LiveAvatarSessionManager(context: Context) : TextDeltaBuffer.FlushCallback
         fun onAvatarSpeakStarted()
         fun onAvatarSpeakEnded()
         fun onError(error: String)
+
+        // Standalone mode callbacks (HeyGen VAD events)
+        fun onUserSpeakStarted() {}   // User started speaking (HeyGen VAD detected speech)
+        fun onUserSpeakEnded() {}     // User stopped speaking (HeyGen VAD detected silence)
     }
 
     // ============================================
@@ -445,20 +449,21 @@ class LiveAvatarSessionManager(context: Context) : TextDeltaBuffer.FlushCallback
         }
 
         try {
-            // SDK prefers WebSocket for listening commands
-            if (webSocketConnected) {
+            // FULL mode: Commands MUST go via LiveKit data channel with "event_type" field
+            // HeyGen docs: "In Full Mode, we process events sent via the LiveKit Protocol"
+            if (LiveAvatarConfig.isStandaloneMode() || !webSocketConnected) {
+                val command = JSONObject().apply {
+                    put("event_type", "avatar.start_listening")
+                }
+                sendViaDataChannel(command.toString())
+                Log.i(TAG, "Start listening sent via LiveKit data channel (FULL mode)")
+            } else {
                 val command = JSONObject().apply {
                     put("type", "agent.start_listening")
                     put("event_id", UUID.randomUUID().toString())
                 }
                 sendToLiveAvatarWebSocket(command.toString())
                 Log.d(TAG, "Start listening sent via WebSocket")
-            } else {
-                val command = JSONObject().apply {
-                    put("event_type", "avatar.start_listening")
-                }
-                sendViaDataChannel(command.toString())
-                Log.d(TAG, "Start listening sent via data channel")
             }
 
         } catch (e: JSONException) {
@@ -477,24 +482,80 @@ class LiveAvatarSessionManager(context: Context) : TextDeltaBuffer.FlushCallback
         }
 
         try {
-            // SDK prefers WebSocket for listening commands
-            if (webSocketConnected) {
+            // FULL mode: Commands MUST go via LiveKit data channel with "event_type" field
+            if (LiveAvatarConfig.isStandaloneMode() || !webSocketConnected) {
+                val command = JSONObject().apply {
+                    put("event_type", "avatar.stop_listening")
+                }
+                sendViaDataChannel(command.toString())
+                Log.i(TAG, "Stop listening sent via LiveKit data channel (FULL mode)")
+            } else {
                 val command = JSONObject().apply {
                     put("type", "agent.stop_listening")
                     put("event_id", UUID.randomUUID().toString())
                 }
                 sendToLiveAvatarWebSocket(command.toString())
                 Log.d(TAG, "Stop listening sent via WebSocket")
-            } else {
-                val command = JSONObject().apply {
-                    put("event_type", "avatar.stop_listening")
-                }
-                sendViaDataChannel(command.toString())
-                Log.d(TAG, "Stop listening sent via data channel")
             }
 
         } catch (e: JSONException) {
             Log.e(TAG, "Error creating stop_listening command", e)
+        }
+    }
+
+    /**
+     * Send user text to HeyGen's built-in LLM for response generation.
+     * In FULL mode, this triggers the avatar to process the text through its LLM,
+     * generate a response, and speak it with lip-sync.
+     */
+    fun speakResponse(text: String) {
+        if (!isConnected()) {
+            Log.w(TAG, "Cannot speakResponse: not connected")
+            return
+        }
+
+        try {
+            // FULL mode: Commands MUST go via LiveKit data channel with "event_type" field
+            if (LiveAvatarConfig.isStandaloneMode() || !webSocketConnected) {
+                val command = JSONObject().apply {
+                    put("event_type", "avatar.speak_response")
+                    put("text", text)
+                }
+                sendViaDataChannel(command.toString())
+                Log.i(TAG, "speak_response sent via LiveKit data channel (FULL mode): $text")
+            } else {
+                val command = JSONObject().apply {
+                    put("type", "agent.speak_response")
+                    put("text", text)
+                    put("event_id", UUID.randomUUID().toString())
+                }
+                sendToLiveAvatarWebSocket(command.toString())
+                Log.i(TAG, "speak_response sent via WebSocket: $text")
+            }
+        } catch (e: JSONException) {
+            Log.e(TAG, "Error creating speak_response command", e)
+        }
+    }
+
+    /**
+     * Send text for the avatar to speak directly (TTS only, no LLM).
+     * In FULL mode, this makes the avatar say the exact text provided.
+     */
+    fun speakText(text: String) {
+        if (!isConnected()) {
+            Log.w(TAG, "Cannot speakText: not connected")
+            return
+        }
+
+        try {
+            val command = JSONObject().apply {
+                put("event_type", "avatar.speak_text")
+                put("text", text)
+            }
+            sendViaDataChannel(command.toString())
+            Log.i(TAG, "speak_text sent via LiveKit data channel: $text")
+        } catch (e: JSONException) {
+            Log.e(TAG, "Error creating speak_text command", e)
         }
     }
 
@@ -590,6 +651,14 @@ class LiveAvatarSessionManager(context: Context) : TextDeltaBuffer.FlushCallback
 
                 Log.d(TAG, "Connected to LiveKit room")
 
+                // In standalone mode, publish local microphone to LiveKit room
+                // so HeyGen can hear the user for STT processing
+                if (LiveAvatarConfig.isStandaloneMode()) {
+                    Log.i(TAG, "Standalone mode: Publishing microphone to LiveKit room")
+                    newRoom.localParticipant.setMicrophoneEnabled(true)
+                    Log.i(TAG, "Microphone enabled and published in LiveKit room")
+                }
+
                 if (state.get() == SessionState.CONNECTING) {
                     setState(SessionState.CONNECTED)
                     startKeepAlive()
@@ -621,37 +690,56 @@ class LiveAvatarSessionManager(context: Context) : TextDeltaBuffer.FlushCallback
                 // Handle data from avatar via LiveKit data channel
                 val data = roomEvent.data
                 val topic = roomEvent.topic
+                val sender = roomEvent.participant?.identity?.value ?: "unknown"
 
-                // Only handle messages on agent-response topic
-                if (topic == LiveAvatarConfig.DATA_CHANNEL_RESPONSE_TOPIC) {
-                    try {
-                        val message = String(data, Charsets.UTF_8)
-                        Log.d(TAG, "DataChannel [${topic}]: ${message.take(100)}...")
-                        mainHandler.post { handleWebSocketMessage(message) }
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Error parsing data channel message", e)
-                    }
+                try {
+                    val message = String(data, Charsets.UTF_8)
+                    Log.i(TAG, "<<< DataChannel [${topic ?: "null"}] from=$sender: ${message.take(200)}")
+
+                    // Process messages from any topic in FULL mode (events may come on various topics)
+                    mainHandler.post { handleWebSocketMessage(message) }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error parsing data channel message from $sender", e)
                 }
             }
 
             is RoomEvent.TrackSubscribed -> {
                 val subscribedTrack: Track = roomEvent.track
                 val subscribedParticipant: RemoteParticipant = roomEvent.participant
-                Log.d(TAG, "Track subscribed: ${subscribedTrack.javaClass.simpleName} " +
-                        "from participant: ${subscribedParticipant.identity}")
+                val participantId = subscribedParticipant.identity?.value ?: "unknown"
+                Log.i(TAG, "Track subscribed: ${subscribedTrack.javaClass.simpleName} " +
+                        "from participant: $participantId")
 
-                // Only handle tracks from the avatar participant (SDK identifies as "heygen")
-                if (subscribedParticipant.identity?.value != LiveAvatarConfig.AVATAR_PARTICIPANT_ID) {
-                    Log.d(TAG, "Ignoring track from non-avatar participant: ${subscribedParticipant.identity}")
-                    return
-                }
-
-                when (subscribedTrack) {
-                    is RemoteVideoTrack -> {
-                        mainHandler.post { handleVideoTrack(subscribedTrack) }
+                if (LiveAvatarConfig.isStandaloneMode()) {
+                    // FULL mode: Accept tracks from both "heygen" (video avatar) and "agent-*" (conversation agent)
+                    when (subscribedTrack) {
+                        is RemoteVideoTrack -> {
+                            if (participantId == LiveAvatarConfig.AVATAR_PARTICIPANT_ID) {
+                                mainHandler.post { handleVideoTrack(subscribedTrack) }
+                            } else {
+                                Log.d(TAG, "Ignoring video track from non-avatar participant: $participantId")
+                            }
+                        }
+                        is RemoteAudioTrack -> {
+                            // Accept audio from any participant in FULL mode
+                            // "heygen" provides lip-sync audio, "agent-*" may provide response audio
+                            Log.i(TAG, "FULL mode: Accepting audio track from participant: $participantId")
+                            mainHandler.post { handleAudioTrack(subscribedTrack) }
+                        }
                     }
-                    is RemoteAudioTrack -> {
-                        mainHandler.post { handleAudioTrack(subscribedTrack) }
+                } else {
+                    // Legacy mode: Only handle tracks from the "heygen" participant
+                    if (participantId != LiveAvatarConfig.AVATAR_PARTICIPANT_ID) {
+                        Log.d(TAG, "Ignoring track from non-avatar participant: $participantId")
+                        return
+                    }
+                    when (subscribedTrack) {
+                        is RemoteVideoTrack -> {
+                            mainHandler.post { handleVideoTrack(subscribedTrack) }
+                        }
+                        is RemoteAudioTrack -> {
+                            mainHandler.post { handleAudioTrack(subscribedTrack) }
+                        }
                     }
                 }
             }
@@ -685,8 +773,26 @@ class LiveAvatarSessionManager(context: Context) : TextDeltaBuffer.FlushCallback
                 }
             }
 
+            is RoomEvent.ParticipantConnected -> {
+                val p = roomEvent.participant
+                Log.i(TAG, "*** Participant CONNECTED: ${p.identity?.value} ***")
+            }
+
+            is RoomEvent.ParticipantDisconnected -> {
+                val p = roomEvent.participant
+                Log.i(TAG, "*** Participant DISCONNECTED: ${p.identity?.value} ***")
+            }
+
+            is RoomEvent.ActiveSpeakersChanged -> {
+                val speakers = roomEvent.speakers.map { it.identity?.value ?: "?" }
+                if (speakers.isNotEmpty()) {
+                    Log.i(TAG, "Active speakers: $speakers")
+                }
+            }
+
             else -> {
-                // Other events we don't need to handle
+                // Log unhandled events for debugging
+                Log.d(TAG, "Room event: ${roomEvent.javaClass.simpleName}")
             }
         }
     }
@@ -744,11 +850,16 @@ class LiveAvatarSessionManager(context: Context) : TextDeltaBuffer.FlushCallback
 
         remoteAudioTrack = track
 
-        // MUTE LiveAvatar audio - OpenAI audio plays directly to speaker
-        // Avatar video is used for lip sync only
-        // Set volume to 0 to mute the audio track
-        track.setVolume(0.0)
-        Log.i(TAG, "Audio track received from LiveAvatar - MUTED (OpenAI audio plays to speaker)")
+        if (LiveAvatarConfig.isStandaloneMode()) {
+            // STANDALONE MODE: HeyGen provides the response audio - leave UNMUTED
+            // The user hears HeyGen's TTS response through this audio track
+            Log.i(TAG, "Audio track received from LiveAvatar - UNMUTED (standalone mode, HeyGen provides audio)")
+        } else {
+            // LEGACY MODE: OpenAI provides audio, LiveAvatar only for lip-sync
+            // Mute LiveAvatar audio to prevent double audio
+            track.setVolume(0.0)
+            Log.i(TAG, "Audio track received from LiveAvatar - MUTED (OpenAI audio plays to speaker)")
+        }
 
         checkStreamReady()
     }
@@ -758,6 +869,15 @@ class LiveAvatarSessionManager(context: Context) : TextDeltaBuffer.FlushCallback
             streamReady = true
             Log.i(TAG, "Stream ready - video and audio tracks available")
             listener?.onStreamReady()
+
+            // In standalone mode, activate HeyGen FULL mode listening
+            if (LiveAvatarConfig.isStandaloneMode()) {
+                Log.i(TAG, "Standalone mode: Sending start_listening to activate HeyGen VAD")
+                // Small delay to ensure LiveKit data channel is fully ready
+                mainHandler.postDelayed({
+                    startListening()
+                }, 500)
+            }
         }
     }
 
@@ -866,8 +986,17 @@ class LiveAvatarSessionManager(context: Context) : TextDeltaBuffer.FlushCallback
                 val type = json.optString("type", json.optString("event_type", ""))
 
                 when (type) {
+                    "user.speak_started", "user_speak_started" -> {
+                        Log.i(TAG, "*** User started speaking (HeyGen VAD) ***")
+                        listener?.onUserSpeakStarted()
+                    }
+                    "user.speak_ended", "user_speak_ended" -> {
+                        Log.i(TAG, "*** User stopped speaking (HeyGen VAD) ***")
+                        listener?.onUserSpeakEnded()
+                    }
                     "user.transcription", "user_transcription" -> {
                         val text = json.optString("text", json.optString("transcript", ""))
+                        Log.i(TAG, "*** User transcription received: '$text' ***")
                         listener?.onUserTranscription(text)
                     }
                     "avatar.transcription", "avatar_transcription" -> {
@@ -924,21 +1053,20 @@ class LiveAvatarSessionManager(context: Context) : TextDeltaBuffer.FlushCallback
         Log.d(TAG, "Sending interrupt...")
 
         try {
-            // SDK prefers WebSocket for interrupt (uses "type": "agent.interrupt")
-            if (webSocketConnected) {
+            // FULL mode: Commands MUST go via LiveKit data channel with "event_type" field
+            if (LiveAvatarConfig.isStandaloneMode() || !webSocketConnected) {
+                val command = JSONObject().apply {
+                    put("event_type", "avatar.interrupt")
+                }
+                sendViaDataChannel(command.toString())
+                Log.i(TAG, "Interrupt sent via LiveKit data channel (FULL mode)")
+            } else {
                 val command = JSONObject().apply {
                     put("type", "agent.interrupt")
                     put("event_id", UUID.randomUUID().toString())
                 }
                 sendToLiveAvatarWebSocket(command.toString())
                 Log.d(TAG, "Interrupt sent via WebSocket")
-            } else {
-                // Fallback to data channel with "event_type" field
-                val command = JSONObject().apply {
-                    put("event_type", "avatar.interrupt")
-                }
-                sendViaDataChannel(command.toString())
-                Log.d(TAG, "Interrupt sent via data channel")
             }
 
         } catch (e: JSONException) {

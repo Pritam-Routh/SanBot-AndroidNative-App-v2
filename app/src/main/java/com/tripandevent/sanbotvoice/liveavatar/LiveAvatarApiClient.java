@@ -139,9 +139,13 @@ public class LiveAvatarApiClient {
         @SerializedName("language")
         public String language;
 
-        public AvatarPersona(String voiceId, String language) {
+        @SerializedName("context_id")
+        public String contextId;
+
+        public AvatarPersona(String voiceId, String language, String contextId) {
             this.voiceId = voiceId;
             this.language = language;
+            this.contextId = contextId;
         }
     }
 
@@ -257,10 +261,11 @@ public class LiveAvatarApiClient {
         String mode = LiveAvatarConfig.getSessionMode();
         AvatarPersona persona = null;
 
-        // FULL mode requires avatar_persona with voice configuration
+        // FULL mode requires avatar_persona with voice and LLM configuration
         if ("FULL".equals(mode)) {
-            // Use default voice and language for FULL mode
-            persona = new AvatarPersona(null, "en");  // null voice_id = use avatar's default voice
+            String contextId = LiveAvatarConfig.getContextId();
+            persona = new AvatarPersona(null, "en", contextId);
+            Log.d(TAG, "FULL mode persona: language=en, context_id=" + contextId);
         }
 
         GetTokenRequest request = new GetTokenRequest(
