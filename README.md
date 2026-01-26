@@ -1,239 +1,254 @@
-# Sanbot Voice Agent
+# SanBot Voice Agent
 
-A production-grade Android application for Sanbot robots (Sanbot Elf & Sanbot S5) that enables real-time voice conversations using OpenAI's GPT Realtime API with WebRTC.
+An AI-powered voice conversation Android app for **Sanbot robots** that integrates OpenAI's Realtime API over WebRTC for near-zero latency sales conversations, with optional avatar video (LiveAvatar / HeyGen) and robot gesture control.
+
+## Overview
+
+The system consists of two parts:
+
+1. **Android App** — Runs on Sanbot robots, handles WebRTC audio, avatar display, and robot gestures
+2. **Backend** — Node.js HTTP server + Python LiveKit agent for token management, avatar sessions, and AI orchestration
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                    ANDROID APP (Sanbot)                       │
+│                                                              │
+│  MainActivity ──► VoiceAgentService ──► WebRTCManager        │
+│       │                  │                   │               │
+│       │                  ▼                   ▼               │
+│       │          FunctionExecutor    OpenAI Realtime API      │
+│       │           │          │       (WebRTC + DataChannel)   │
+│       │           ▼          ▼                               │
+│       │       CRM API   Robot Gestures                       │
+│       │                                                      │
+│       └──► LiveAvatar / HeyGen Avatar (video overlay)        │
+└──────────────────────────────────────────────────────────────┘
+                          │
+                          ▼
+┌──────────────────────────────────────────────────────────────┐
+│                    BACKEND SERVERS                            │
+│                                                              │
+│  Node.js (Express)          Python (LiveKit Agent)           │
+│  ├── /token                 ├── OpenAI Realtime plugin       │
+│  ├── /liveavatar/*          ├── CRM function tools           │
+│  ├── /heygen/*              └── Robot action tools           │
+│  └── /orchestrated/*                                         │
+└──────────────────────────────────────────────────────────────┘
+```
 
 ## Features
 
-- **Low-latency voice conversations** using WebRTC for near-zero latency
-- **Automatic speech detection** with Voice Activity Detection (VAD)
-- **Function calling** for CRM integration (save leads, create quotes)
-- **Production-ready** error handling, logging, and monitoring
-- **Sanbot SDK integration** for robot-specific features
-- **Ephemeral token security** - API keys never stored on device
+- **Real-time voice conversations** via WebRTC with OpenAI Realtime API
+- **Avatar video** — LiveAvatar (audio-based, lowest latency) or HeyGen (text-based)
+- **Sanbot robot integration** — gestures, emotions, and motion synced to conversation
+- **AI function calling** — save customer leads, create quotes, control robot
+- **Ephemeral token security** — API keys never stored on device
+- **Multiple modes** — Standard, HeyGen Full, and Orchestrated (single LiveKit room)
 
-## Architecture
+## Supported Modes
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                     SANBOT VOICE AGENT                         │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  MainActivity ──▶ VoiceAgentService ──▶ WebRTCManager          │
-│       │                   │                    │                │
-│       │                   │                    ▼                │
-│       │                   │           OpenAI Realtime API      │
-│       │                   │           (WebRTC Connection)       │
-│       │                   │                    │                │
-│       │                   ▼                    │                │
-│       │          FunctionExecutor ◀───────────┘                │
-│       │                   │                                     │
-│       │                   ▼                                     │
-│       │          TripAndEvent Backend                          │
-│       │          (bot.tripandevent.com)                        │
-│       │                                                         │
-│       └──────────▶ UI Updates                                  │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-```
+| Mode | Description |
+|------|-------------|
+| **Standard** | OpenAI WebRTC + LiveAvatar video + Sanbot gestures |
+| **HeyGen Full** | HeyGen handles voice + avatar (no OpenAI WebRTC) |
+| **Orchestrated** | Single LiveKit room with OpenAI Agent + HeyGen BYOLI |
+
+---
 
 ## Prerequisites
 
+### Android App
+
 - Android Studio Hedgehog or later
 - JDK 17
-- Sanbot SDK (SanbotOpenSDK.aar)
-- Sanbot robot running Android 7.0+ (Elf) or Android 12 (S5)
+- Android SDK 34
+- Sanbot robot running Android 7.0+ (Elf) or Android 12+ (S5)
 
-## Setup
+### Backend
 
-### 1. Clone the repository
+- Node.js 18+
+- Python 3.11+
+- Docker & Docker Compose (optional, for containerized deployment)
+- API keys: OpenAI, LiveAvatar/HeyGen (optional), LiveKit (optional)
+
+---
+
+## Quick Start
+
+### 1. Start the Backend
+
+See [OpenAI-realtime-backend-V1/README.md](OpenAI-realtime-backend-V1/README.md) for detailed backend setup.
+
+**With Docker (recommended):**
 
 ```bash
-git clone <repository-url>
-cd SanbotVoiceAgent
+cd OpenAI-realtime-backend-V1
+cp .env.example .env
+# Edit .env with your API keys
+docker compose up --build
 ```
 
-### 2. Add Sanbot SDK
+**Without Docker:**
 
-Place the Sanbot SDK AAR file in `app/libs/`:
+```bash
+# Terminal 1 — Node.js server
+cd OpenAI-realtime-backend-V1
+cp .env.example .env
+# Edit .env with your API keys
+npm install
+npm start                    # Runs on port 3051
 
+# Terminal 2 — Python agent (only needed for Orchestrated mode)
+cd OpenAI-realtime-backend-V1/agent
+pip install -r requirements.txt
+python agent.py start
 ```
-app/libs/SanbotOpenSDK.aar
-```
 
-### 3. Configure Backend
+### 2. Configure the Android App
 
-The app currently uses a test backend by default:
+Edit `gradle.properties` to point to your backend:
 
-**Test Backend (current):**
 ```properties
-# gradle.properties
-TRIPANDEVENT_BASE_URL=https://openai-realtime-backend-v1.onrender.com
+# Backend URL (use your machine's IP or a dev tunnel)
+TRIPANDEVENT_BASE_URL=http://YOUR_SERVER_IP:3051
+
+# Feature flags
+ENABLE_LIVEAVATAR=true
+ENABLE_OPENAI_WEBRTC=true
+ENABLE_ORCHESTRATED_MODE=true
+ENABLE_HEYGEN_AVATAR=false
 ```
 
-**Production Backend (when ready):**
-```properties
-# gradle.properties
-TRIPANDEVENT_BASE_URL=https://bot.tripandevent.com
-TRIPANDEVENT_API_TOKEN=your_api_token_here
-```
-
-Also update `Constants.java`:
-```java
-// Set to false for production backend
-public static final boolean USE_TEST_BACKEND = false;
-```
-
-### 4. Build and run
+### 3. Build and Run the App
 
 ```bash
 ./gradlew assembleDebug
 adb install app/build/outputs/apk/debug/app-debug.apk
 ```
 
-## Backend Modes
+Or open the project in Android Studio and run it directly.
 
-### Test Backend
-- URL: `https://openai-realtime-backend-v1.onrender.com`
-- Endpoints:
-  - `GET /token` - Get ephemeral token
-  - `POST /session` - SDP exchange (backend proxies to OpenAI)
-- No auth required
-- Function calls (save_customer_lead, etc.) are no-ops in test mode
+---
 
-### Production Backend
-- URL: `https://bot.tripandevent.com`
-- Endpoints:
-  - `POST /api/trpc/voice.getToken` - Get ephemeral token
-  - `POST /api/trpc/sanbot.saveCustomerLead` - Save customer lead
-  - `POST /api/trpc/sanbot.createQuote` - Create quote
-  - `POST /api/trpc/sanbot.logDisconnect` - Log session end
-- Requires Bearer token authentication
-- Full function calling support
+## Android App Configuration
 
-## Project Structure
+### Feature Flags (`gradle.properties`)
 
-```
-app/src/main/java/com/tripandevent/sanbotvoice/
-├── SanbotVoiceApp.java          # Application class
-├── MainActivity.java             # Main UI
-├── core/
-│   ├── VoiceAgentService.java   # Foreground service
-│   └── ConversationState.java   # State machine
-├── webrtc/
-│   ├── WebRTCManager.java       # WebRTC connection
-│   └── WebRTCConfig.java        # Configuration
-├── openai/events/
-│   ├── ClientEvents.java        # Events sent to API
-│   ├── ServerEvents.java        # Events from API
-│   └── EventTypes.java          # Event type constants
-├── api/
-│   ├── ApiClient.java           # HTTP client
-│   ├── TokenManager.java        # Ephemeral tokens
-│   ├── TripAndEventApi.java     # API interface
-│   └── models/                  # Data models
-├── functions/
-│   ├── FunctionRegistry.java    # Tool definitions
-│   ├── FunctionExecutor.java    # Function execution
-│   ├── SaveCustomerLeadFunction.java
-│   ├── CreateQuoteFunction.java
-│   └── DisconnectCallFunction.java
-└── utils/
-    ├── Constants.java           # App constants
-    └── Logger.java              # Logging utility
-```
-
-## How It Works
-
-### Connection Flow
-
-1. **Token Request**: App requests ephemeral token from TripAndEvent backend
-2. **WebRTC Setup**: Create PeerConnection, audio tracks, data channel
-3. **SDP Exchange**: Send offer to OpenAI, receive answer via backend
-4. **Session Config**: Configure AI instructions and available tools
-5. **Conversation**: Real-time audio via WebRTC, events via DataChannel
-
-### Function Calling
-
-The AI can call these functions during conversation:
-
-| Function | Description |
-|----------|-------------|
-| `save_customer_lead` | Save customer contact info to CRM |
-| `create_quote` | Generate and save a price quote |
-| `disconnect_call` | End the conversation gracefully |
-
-### Audio Processing
-
-- **Input**: Device microphone → WebRTC LocalTrack → OpenAI
-- **Output**: OpenAI → WebRTC RemoteTrack → Device speaker
-- **Format**: PCM 16-bit mono @ 24kHz
-
-## Configuration
+| Flag | Default | Description |
+|------|---------|-------------|
+| `ENABLE_LIVEAVATAR` | `true` | Audio-based avatar (lowest latency) |
+| `ENABLE_OPENAI_WEBRTC` | `true` | Use OpenAI Realtime via WebRTC |
+| `ENABLE_ORCHESTRATED_MODE` | `true` | Single LiveKit room with OpenAI Agent |
+| `ENABLE_HEYGEN_AVATAR` | `false` | HeyGen text-based avatar |
+| `ENABLE_TRANSCRIPT_DISPLAY` | `true` | Show conversation transcripts on screen |
+| `ENABLE_DEBUG_LOGGING` | `true` | Verbose logging |
 
 ### Voice Options
 
 Available voices: `alloy`, `ash`, `ballad`, `coral`, `echo`, `sage`, `shimmer`, `verse`, `marin`, `cedar`
 
-Recommended: `marin` or `cedar`
+Set in `gradle.properties`:
 
-### System Instructions
+```properties
+OPENAI_VOICE=marin
+```
 
-Customize the AI's behavior in `VoiceAgentService.getSystemInstructions()`.
+---
+
+## Project Structure
+
+```
+SanBot-AndroidNative-App-v2/
+├── app/                                 # Android application
+│   └── src/main/java/com/tripandevent/sanbotvoice/
+│       ├── MainActivity.java            # Main UI
+│       ├── SanbotVoiceApp.java          # Application lifecycle
+│       ├── core/                        # VoiceAgentService, ConversationState
+│       ├── webrtc/                      # WebRTC connection management
+│       ├── openai/events/               # OpenAI Realtime event models
+│       ├── api/                         # Backend HTTP client (Retrofit)
+│       ├── functions/                   # AI function calling (CRM, disconnect)
+│       ├── audio/                       # Audio processing, VAD, boosting
+│       ├── heygen/                      # HeyGen avatar integration
+│       ├── liveavatar/                  # LiveAvatar integration
+│       ├── orchestration/              # LiveKit orchestrated mode
+│       ├── sanbot/                      # Sanbot SDK (gestures, emotions)
+│       ├── ui/                          # Avatar view, voice orb
+│       ├── config/                      # AgentConfig builder
+│       └── utils/                       # Constants, Logger
+│
+├── OpenAI-realtime-backend-V1/          # Backend servers
+│   ├── server.js                        # Node.js Express server
+│   ├── agent/                           # Python LiveKit agent
+│   │   ├── agent.py                     # AI agent with function tools
+│   │   ├── crm_functions.py             # CRM API integration
+│   │   └── heygen_byoli.py             # HeyGen BYOLI support
+│   ├── heygen/                          # HeyGen session management
+│   ├── liveavatar/                      # LiveAvatar session management
+│   ├── orchestration/                   # Orchestrated mode logic
+│   ├── docker-compose.yml               # Docker services
+│   └── .env.example                     # Environment template
+│
+├── audio-orb/                           # Audio visualization library
+├── liveavatar-web-sdk-master/           # LiveAvatar SDK
+└── server-sdk-kotlin-main/              # Sanbot SDK (Kotlin)
+```
+
+---
+
+## How It Works
+
+### Connection Flow
+
+1. App requests an **ephemeral token** from the Node.js backend
+2. App creates a **WebRTC PeerConnection** with OpenAI Realtime API
+3. Audio streams bidirectionally over WebRTC; events flow over DataChannel
+4. The AI agent responds with voice and can call **functions** (save leads, create quotes, control robot)
+5. If avatar is enabled, audio/text is forwarded to LiveAvatar/HeyGen for lip-synced video
+
+### AI Function Calling
+
+| Function | Description |
+|----------|-------------|
+| `save_customer_lead` | Save customer contact info to CRM |
+| `create_quote` | Generate a price quote for a travel package |
+| `disconnect_call` | End the conversation gracefully |
+| `robot_action` | Trigger Sanbot gestures (wave, nod, greet, etc.) |
+| `find_packages` | Search travel packages by destination |
+
+### Audio Format
+
+- PCM 16-bit mono @ 24kHz (matches OpenAI Realtime spec)
+
+---
 
 ## Troubleshooting
 
-### No audio output
+| Problem | Solution |
+|---------|----------|
+| No audio output | Check device volume, verify `RECORD_AUDIO` permission, check WebRTC state in logs |
+| Connection fails | Verify network, check backend is running, confirm API token validity |
+| High latency | Ensure stable WiFi, check VAD config, verify ICE connection |
+| Avatar not showing | Confirm `ENABLE_LIVEAVATAR=true` in gradle.properties, check LiveAvatar API key |
+| Backend unreachable | Verify `TRIPANDEVENT_BASE_URL` matches your server, check firewall/port |
 
-1. Check device volume
-2. Verify RECORD_AUDIO permission granted
-3. Check WebRTC connection state in logs
+---
 
-### Connection failures
+## Tech Stack
 
-1. Verify network connectivity
-2. Check API token validity
-3. Review logs for specific errors
+| Layer | Technology |
+|-------|-----------|
+| Android | Java + Kotlin, Android SDK 34 |
+| WebRTC | stream-webrtc-android 1.1.0 |
+| Video Streaming | LiveKit Android SDK 2.5.0 |
+| AI/LLM | OpenAI Realtime API (gpt-4o-realtime) |
+| HTTP Client | Retrofit 2.9.0 + OkHttp 4.12.0 |
+| Backend (HTTP) | Node.js 18+ / Express 4 |
+| Backend (Agent) | Python 3.11+ / LiveKit Agents |
+| Containerization | Docker + Docker Compose |
 
-### High latency
-
-1. Ensure stable WiFi connection
-2. Check if VAD is properly configured
-3. Verify WebRTC ICE connection succeeded
-
-## Security Considerations
-
-- **API Keys**: Never stored on device; ephemeral tokens only
-- **Network**: All connections use HTTPS/WSS
-- **Permissions**: Minimal required permissions
-
-## Testing
-
-### Unit Tests
-
-```bash
-./gradlew test
-```
-
-### On-Device Testing
-
-1. Install on Sanbot robot
-2. Launch app
-3. Tap "Start Conversation"
-4. Speak to the AI
-5. Tap "End Conversation" or say goodbye
-
-## Production Deployment
-
-1. Generate release keystore
-2. Configure signing in `build.gradle`
-3. Build release APK: `./gradlew assembleRelease`
-4. Test thoroughly on target devices
-5. Deploy via ADB or MDM
+---
 
 ## License
 
 Proprietary - TripAndEvent
-
-## Support
-
-For technical support, contact the development team.
