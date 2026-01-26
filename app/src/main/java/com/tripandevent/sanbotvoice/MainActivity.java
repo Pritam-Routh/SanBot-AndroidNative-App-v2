@@ -48,9 +48,6 @@ public class MainActivity extends AppCompatActivity implements VoiceAgentService
     private ImageButton backButton;
     private TextView statusText;
     private TextView questionText;
-    private TextView subtitleText;
-    private TextView speakerText;
-    private TextView statsText;
     private VoiceOrbView voiceOrb;
 
     // Avatar UI components
@@ -128,21 +125,10 @@ public class MainActivity extends AppCompatActivity implements VoiceAgentService
         backButton = findViewById(R.id.backButton);
         statusText = findViewById(R.id.statusText);
         questionText = findViewById(R.id.questionText);
-        subtitleText = findViewById(R.id.subtitleText);
-        speakerText = findViewById(R.id.speakerText);
-        statsText = findViewById(R.id.statsText);
         voiceOrb = findViewById(R.id.voiceOrb);
 
         statusText.setText("Ready");
         questionText.setText("Hi there, Welcome to Trip & Event!");
-
-        if (speakerText != null) {
-            speakerText.setVisibility(View.GONE);
-        }
-
-        if (statsText != null) {
-            statsText.setVisibility(View.GONE);
-        }
 
         // Initialize avatar UI components if any avatar provider is enabled
         if (HeyGenConfig.isEnabled() || LiveAvatarConfig.isEnabled()) {
@@ -340,16 +326,6 @@ public class MainActivity extends AppCompatActivity implements VoiceAgentService
         });
     }
     
-    @Override
-    public void onSpeakerIdentified(String speakerName, float confidence) {
-        runOnUiThread(() -> {
-            if (speakerText != null) {
-                speakerText.setVisibility(View.VISIBLE);
-                speakerText.setText(String.format("Speaker: %s (%.0f%%)", speakerName, confidence * 100));
-            }
-        });
-    }
-
     @Override
     public void onAvatarVideoReady() {
         runOnUiThread(() -> {

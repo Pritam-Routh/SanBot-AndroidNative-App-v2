@@ -22,7 +22,6 @@ import com.tripandevent.sanbotvoice.R;
 import com.tripandevent.sanbotvoice.config.AgentConfig;
 import com.tripandevent.sanbotvoice.audio.AudioBooster;
 import com.tripandevent.sanbotvoice.audio.AudioProcessor;
-import com.tripandevent.sanbotvoice.audio.SpeakerIdentifier;
 import com.tripandevent.sanbotvoice.analytics.ConversationAnalytics;
 import com.tripandevent.sanbotvoice.functions.FunctionExecutor;
 import com.tripandevent.sanbotvoice.openai.events.ClientEvents;
@@ -58,7 +57,6 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
     private FunctionExecutor functionExecutor;
     private AudioProcessor audioProcessor;
     private AudioBooster audioBooster;
-    private SpeakerIdentifier speakerIdentifier;
     private ConversationAnalytics analytics;
     private SanbotMotionManager sanbotMotionManager;
 
@@ -81,7 +79,6 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
     private ConversationState currentState = ConversationState.IDLE;
     private VoiceAgentListener listener;
     private String currentSessionId;
-    private long conversationStartTime;
     private int messageCount;
     private boolean sessionConfigured = false;
     
@@ -118,7 +115,6 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
         void onTranscript(String text, boolean isUser);
         void onError(String error);
         void onAudioLevel(float level);
-        void onSpeakerIdentified(String speakerName, float confidence);
 
         // HeyGen Avatar callbacks
         default void onAvatarVideoReady() {}
@@ -217,9 +213,6 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
                 }
             });
         }
-        
-        // Initialize speaker identifier
-        speakerIdentifier = new SpeakerIdentifier(this);
         
         // Initialize analytics
         analytics = new ConversationAnalytics(this);
@@ -799,7 +792,6 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
         currentTranscript = new StringBuilder();
         userTranscript = new StringBuilder();
         aiTranscript = new StringBuilder();
-        conversationStartTime = System.currentTimeMillis();
         messageCount = 0;
         sessionConfigured = false;
 
@@ -946,7 +938,6 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
             mainHandler.postDelayed(() -> sanbotMotionManager.resetAll(), 1500);
         }
         
-        logDisconnect("user_initiated");
         setState(ConversationState.IDLE);
     }
     
@@ -954,21 +945,8 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
         return currentState;
     }
     
-    public long getConversationDuration() {
-        if (conversationStartTime == 0) return 0;
-        return System.currentTimeMillis() - conversationStartTime;
-    }
-    
-    public String getCurrentSessionId() {
-        return currentSessionId;
-    }
-    
     public ConversationAnalytics getAnalytics() {
         return analytics;
-    }
-    
-    public SpeakerIdentifier getSpeakerIdentifier() {
-        return speakerIdentifier;
     }
     
     public AudioBooster getAudioBooster() {
@@ -986,23 +964,6 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
             return audioBooster.getBoostLevel();
         }
         return 0;
-    }
-    
-    public void processAudioSamples(short[] samples) {
-        if (audioProcessor != null && audioProcessor.isInitialized()) {
-            audioProcessor.processAudioSamples(samples);
-        }
-        
-        if (speakerIdentifier != null && samples != null && samples.length >= 480) {
-            SpeakerIdentifier.IdentificationResult result = speakerIdentifier.identifySpeaker(samples);
-            if (result != null && !result.isNewSpeaker && result.confidence > 0.75f) {
-                Logger.d(TAG, "Speaker identified: %s (%.0f%%)", 
-                    result.speakerName, result.confidence * 100);
-                if (listener != null) {
-                    listener.onSpeakerIdentified(result.speakerName, result.confidence);
-                }
-            }
-        }
     }
     
     // ============================================
@@ -1085,7 +1046,6 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
         }
         
         if (currentState != ConversationState.IDLE) {
-            logDisconnect(reason);
             setState(ConversationState.IDLE);
         }
     }
@@ -1376,14 +1336,6 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
         if (listener != null) {
             listener.onError(errorMessage);
         }
-    }
-    
-    private void logDisconnect(String reason) {
-        long duration = getConversationDuration();
-        String fullTranscript = userTranscript.toString() + aiTranscript.toString();
-        
-        Logger.d(TAG, "Logging disconnect - Session: %s, Duration: %dms, Messages: %d, Reason: %s",
-            currentSessionId, duration, messageCount, reason);
     }
     
     // ============================================
