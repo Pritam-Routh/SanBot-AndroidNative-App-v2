@@ -477,6 +477,160 @@ public class LiveAvatarApiClient {
     }
 
     // ============================================
+    // ORCHESTRATED MODE (LiveKit + OpenAI Agent + HeyGen BYOLI)
+    // ============================================
+
+    /**
+     * Response from orchestrated session creation.
+     * The backend creates a LiveKit room and user token.
+     * The Python agent handles HeyGen/LiveAvatar via its plugin.
+     */
+    public static class OrchestratedSessionInfo {
+        @SerializedName("success")
+        public boolean success;
+
+        @SerializedName("url")
+        public String url;
+
+        @SerializedName("roomName")
+        public String roomName;
+
+        @SerializedName("userToken")
+        public String userToken;
+
+        @SerializedName("error")
+        public String error;
+
+        @SerializedName("message")
+        public String message;
+
+        @Override
+        public String toString() {
+            return "OrchestratedSessionInfo{url=" + (url != null ? "set" : "null") +
+                   ", roomName=" + roomName + "}";
+        }
+    }
+
+    /**
+     * Callback for orchestrated session creation
+     */
+    public interface OrchestratedSessionCallback {
+        void onSuccess(OrchestratedSessionInfo info);
+        void onError(String error);
+    }
+
+    /**
+     * Start an orchestrated session via backend.
+     * Creates a LiveKit room and returns user credentials.
+     * The Python agent auto-dispatches and handles HeyGen/LiveAvatar via its plugin.
+     *
+     * POST /orchestrated/session/start
+     * Body: {}
+     * Returns: { success, url, roomName, userToken }
+     *
+     * @param avatarId Unused (kept for API compatibility). Avatar is configured server-side.
+     * @param callback Response callback
+     */
+    public void startOrchestratedSession(@Nullable String avatarId, @NonNull OrchestratedSessionCallback callback) {
+        String url = backendBaseUrl + "/orchestrated/session/start";
+
+        String json = "{}";
+
+        Request httpRequest = new Request.Builder()
+                .url(url)
+                .addHeader("Content-Type", "application/json")
+                .post(RequestBody.create(json, JSON))
+                .build();
+
+        Log.i(TAG, "Starting orchestrated session (avatar: " + avatarId + ")");
+
+        httpClient.newCall(httpRequest).enqueue(new Callback() {
+            @Override
+            public void onFailure(@NonNull Call call, @NonNull IOException e) {
+                Log.e(TAG, "Orchestrated session start failed", e);
+                callback.onError("Network error: " + e.getMessage());
+            }
+
+            @Override
+            public void onResponse(@NonNull Call call, @NonNull Response response) throws IOException {
+                try {
+                    String body = response.body() != null ? response.body().string() : "";
+                    Log.d(TAG, "Orchestrated session response (code " + response.code() + "): " +
+                          (body.length() > 500 ? body.substring(0, 500) + "..." : body));
+
+                    if (!response.isSuccessful()) {
+                        callback.onError("HTTP " + response.code() + ": " + body);
+                        return;
+                    }
+
+                    OrchestratedSessionInfo info = gson.fromJson(body, OrchestratedSessionInfo.class);
+                    if (info != null && info.success && info.url != null && info.userToken != null) {
+                        Log.i(TAG, "Orchestrated session created: " + info);
+                        callback.onSuccess(info);
+                    } else {
+                        String error = info != null ?
+                            (info.error != null ? info.error : info.message) :
+                            "Invalid response";
+                        callback.onError(error != null ? error : "Unknown error");
+                    }
+                } catch (Exception e) {
+                    Log.e(TAG, "Parse orchestrated session response failed", e);
+                    callback.onError("Parse error: " + e.getMessage());
+                }
+            }
+        });
+    }
+
+    /**
+     * Stop an orchestrated session.
+     * Deletes the LiveKit room. The agent and LiveAvatar plugin
+     * clean up their own resources automatically.
+     *
+     * POST /orchestrated/session/stop
+     * Body: { roomName?: string }
+     *
+     * @param heygenSessionId Unused (kept for API compatibility). Agent cleans up HeyGen.
+     * @param roomName Room name to delete
+     * @param callback Response callback
+     */
+    public void stopOrchestratedSession(@Nullable String heygenSessionId,
+                                         @Nullable String roomName,
+                                         @NonNull SimpleCallback callback) {
+        String url = backendBaseUrl + "/orchestrated/session/stop";
+
+        String jsonBody = roomName != null ?
+            "{\"roomName\":\"" + roomName + "\"}" :
+            "{}";
+
+        Request httpRequest = new Request.Builder()
+                .url(url)
+                .addHeader("Content-Type", "application/json")
+                .post(RequestBody.create(jsonBody, JSON))
+                .build();
+
+        Log.d(TAG, "Stopping orchestrated session: room=" + roomName);
+
+        httpClient.newCall(httpRequest).enqueue(new Callback() {
+            @Override
+            public void onFailure(@NonNull Call call, @NonNull IOException e) {
+                Log.w(TAG, "Orchestrated session stop failed", e);
+                callback.onError("Network error: " + e.getMessage());
+            }
+
+            @Override
+            public void onResponse(@NonNull Call call, @NonNull Response response) throws IOException {
+                Log.d(TAG, "Orchestrated session stop response: " + response.code());
+                if (response.isSuccessful()) {
+                    callback.onSuccess();
+                } else {
+                    String body = response.body() != null ? response.body().string() : "";
+                    callback.onError("HTTP " + response.code() + ": " + body);
+                }
+            }
+        });
+    }
+
+    // ============================================
     // SPEAK COMMANDS (FOR LIP-SYNC)
     // ============================================
 

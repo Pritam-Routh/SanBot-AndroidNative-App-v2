@@ -13,6 +13,7 @@ import androidx.annotation.Nullable;
 import com.tripandevent.sanbotvoice.heygen.HeyGenSessionManager;
 import com.tripandevent.sanbotvoice.heygen.HeyGenVideoManager;
 import com.tripandevent.sanbotvoice.liveavatar.LiveAvatarSessionManager;
+import com.tripandevent.sanbotvoice.orchestration.OrchestratedSessionManager;
 
 import io.livekit.android.renderer.SurfaceViewRenderer;
 
@@ -170,6 +171,14 @@ public class AvatarViewController {
      * LiveAvatar uses the same SurfaceViewRenderer as HeyGen for video display
      */
     public void bindLiveAvatarManager(@NonNull LiveAvatarSessionManager sessionManager) {
+        sessionManager.setVideoRenderer(avatarVideoView);
+    }
+
+    /**
+     * Bind the Orchestrated session manager to the renderer
+     * In orchestrated mode, HeyGen video comes through the single LiveKit room
+     */
+    public void bindOrchestratedManager(@NonNull OrchestratedSessionManager sessionManager) {
         sessionManager.setVideoRenderer(avatarVideoView);
     }
 

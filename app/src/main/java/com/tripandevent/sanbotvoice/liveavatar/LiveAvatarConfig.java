@@ -39,6 +39,35 @@ public class LiveAvatarConfig {
     }
 
     /**
+     * Whether Orchestrated LiveKit mode is enabled.
+     * In orchestrated mode:
+     * - A single LiveKit room hosts User + OpenAI Agent + HeyGen Avatar
+     * - Agent handles STT+LLM+TTS via LiveKit Agents framework (server-side)
+     * - HeyGen provides audio-driven lip-sync video via BYOLI
+     * - Agent sends robot commands via LiveKit data channel
+     * - Android app is a simple room participant (publish mic, subscribe to audio+video)
+     * - NO local WebRTCManager, AudioProcessor, or text delta batching needed
+     */
+    public static boolean isOrchestratedMode() {
+        return isEnabled() && isOpenAIWebRTCEnabled() && BuildConfig.ENABLE_ORCHESTRATED_MODE;
+    }
+
+    /**
+     * Participant identity prefix for the OpenAI Agent in orchestrated mode
+     */
+    public static final String AGENT_PARTICIPANT_PREFIX = "agent-";
+
+    /**
+     * Data channel topic for receiving robot commands from the Agent
+     */
+    public static final String ROBOT_COMMAND_TOPIC = "robot-commands";
+
+    /**
+     * Data channel topic for receiving transcripts from the Agent
+     */
+    public static final String TRANSCRIPT_TOPIC = "transcripts";
+
+    /**
      * Default avatar ID to use
      */
     public static String getAvatarId() {

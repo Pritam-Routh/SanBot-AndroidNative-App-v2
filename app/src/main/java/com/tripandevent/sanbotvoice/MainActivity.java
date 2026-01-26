@@ -32,6 +32,7 @@ import com.tripandevent.sanbotvoice.heygen.HeyGenSessionManager;
 import com.tripandevent.sanbotvoice.heygen.HeyGenVideoManager;
 import com.tripandevent.sanbotvoice.liveavatar.LiveAvatarConfig;
 import com.tripandevent.sanbotvoice.liveavatar.LiveAvatarSessionManager;
+import com.tripandevent.sanbotvoice.orchestration.OrchestratedSessionManager;
 import com.tripandevent.sanbotvoice.ui.AvatarViewController;
 import com.tripandevent.sanbotvoice.ui.views.VoiceOrbView;
 import com.tripandevent.sanbotvoice.utils.Logger;
@@ -348,7 +349,20 @@ public class MainActivity extends AppCompatActivity implements VoiceAgentService
             if (avatarViewController != null && voiceService != null) {
                 // Check which avatar provider is active and bind accordingly
 
-                // Try LiveAvatar first (if enabled, it takes priority)
+                // Try Orchestrated mode first (highest priority)
+                if (voiceService.isOrchestratedMode()) {
+                    OrchestratedSessionManager orchestratedManager = voiceService.getOrchestratedSessionManager();
+                    if (orchestratedManager != null) {
+                        avatarViewController.bindOrchestratedManager(orchestratedManager);
+                        avatarViewController.showVideo();
+                        Logger.i(TAG, "Orchestrated video shown successfully");
+                        return;
+                    } else {
+                        Logger.e(TAG, "OrchestratedSessionManager is null!");
+                    }
+                }
+
+                // Try LiveAvatar (if enabled, it takes priority over HeyGen)
                 if (voiceService.isLiveAvatarEnabled()) {
                     LiveAvatarSessionManager liveAvatarManager = voiceService.getLiveAvatarSessionManager();
                     if (liveAvatarManager != null) {

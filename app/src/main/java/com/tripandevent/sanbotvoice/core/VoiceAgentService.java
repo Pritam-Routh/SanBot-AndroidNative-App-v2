@@ -36,6 +36,7 @@ import com.tripandevent.sanbotvoice.heygen.HeyGenSessionManager;
 import com.tripandevent.sanbotvoice.heygen.HeyGenVideoManager;
 import com.tripandevent.sanbotvoice.liveavatar.LiveAvatarConfig;
 import com.tripandevent.sanbotvoice.liveavatar.LiveAvatarSessionManager;
+import com.tripandevent.sanbotvoice.orchestration.OrchestratedSessionManager;
 
 import org.webrtc.AudioTrack;
 
@@ -71,6 +72,10 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
 
     // Standalone mode flag (HeyGen FULL mode, no OpenAI WebRTC)
     private boolean isStandaloneMode = false;
+
+    // Orchestrated mode (Single LiveKit room: User + OpenAI Agent + HeyGen Avatar)
+    private OrchestratedSessionManager orchestratedSessionManager;
+    private boolean isOrchestratedMode = false;
 
     // State
     private ConversationState currentState = ConversationState.IDLE;
@@ -132,16 +137,20 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
         Logger.i(TAG, "VoiceAgentService created");
 
         // Determine mode first (before any initialization)
-        isStandaloneMode = LiveAvatarConfig.isStandaloneMode();
-        Logger.i(TAG, "Standalone HeyGen FULL mode: %b", isStandaloneMode);
+        // Priority: Orchestrated > Standalone > Hybrid (legacy)
+        isOrchestratedMode = LiveAvatarConfig.isOrchestratedMode();
+        isStandaloneMode = !isOrchestratedMode && LiveAvatarConfig.isStandaloneMode();
+        Logger.i(TAG, "Mode: orchestrated=%b, standalone=%b", isOrchestratedMode, isStandaloneMode);
 
-        // Initialize WebRTC manager only when OpenAI is enabled
-        if (!isStandaloneMode) {
-            Logger.i(TAG, "OpenAI WebRTC enabled - initializing WebRTCManager");
+        // Initialize WebRTC manager only in hybrid/legacy mode
+        // Orchestrated mode: Agent runs server-side, no local WebRTC needed
+        // Standalone mode: HeyGen handles everything, no OpenAI WebRTC needed
+        if (!isOrchestratedMode && !isStandaloneMode) {
+            Logger.i(TAG, "Hybrid mode - initializing WebRTCManager");
             webRTCManager = new WebRTCManager(this, this);
             webRTCManager.initialize();
         } else {
-            Logger.i(TAG, "OpenAI WebRTC DISABLED - standalone HeyGen FULL mode");
+            Logger.i(TAG, "WebRTC DISABLED (orchestrated=%b, standalone=%b)", isOrchestratedMode, isStandaloneMode);
             webRTCManager = null;
         }
         
@@ -158,9 +167,10 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
         // Initialize audio processor
         audioProcessor = new AudioProcessor(this);
 
-        // Only wire local speech detection when OpenAI WebRTC is active.
-        // In standalone mode, HeyGen VAD events drive state transitions instead.
-        if (!isStandaloneMode) {
+        // Only wire local speech detection when OpenAI WebRTC is active (hybrid mode).
+        // In standalone mode, HeyGen VAD events drive state transitions.
+        // In orchestrated mode, Agent handles STT server-side.
+        if (!isStandaloneMode && !isOrchestratedMode) {
             audioProcessor.setCallback(new AudioProcessor.AudioProcessorCallback() {
                 @Override
                 public void onSpeechStart() {
@@ -214,11 +224,17 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
         // Initialize analytics
         analytics = new ConversationAnalytics(this);
 
-        // Initialize HeyGen if enabled
-        initializeHeyGen();
+        if (isOrchestratedMode) {
+            // Orchestrated mode: OrchestratedSessionManager handles everything
+            // No HeyGen or LiveAvatar local sessions needed
+            initializeOrchestrated();
+        } else {
+            // Initialize HeyGen if enabled
+            initializeHeyGen();
 
-        // Initialize LiveAvatar if enabled (takes precedence over HeyGen if both enabled)
-        initializeLiveAvatar();
+            // Initialize LiveAvatar if enabled (takes precedence over HeyGen if both enabled)
+            initializeLiveAvatar();
+        }
 
         createNotificationChannel();
     }
@@ -463,6 +479,134 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
         }
     }
 
+    /**
+     * Initialize Orchestrated mode (Single LiveKit room: User + Agent + HeyGen)
+     *
+     * In this mode, the OrchestratedSessionManager handles the entire session:
+     * - Connects to a single LiveKit room alongside OpenAI Agent and HeyGen Avatar
+     * - Agent handles STT+LLM+TTS server-side via LiveKit Agents framework
+     * - HeyGen provides lip-synced video via BYOLI (Bring Your Own LiveKit Instance)
+     * - Robot commands arrive via LiveKit data channel from the Agent
+     * - No local WebRTCManager, AudioProcessor, or text delta batching needed
+     */
+    private void initializeOrchestrated() {
+        Logger.i(TAG, "Initializing Orchestrated LiveKit mode");
+
+        orchestratedSessionManager = new OrchestratedSessionManager(this);
+        orchestratedSessionManager.setListener(new OrchestratedSessionManager.SessionListener() {
+            @Override
+            public void onStateChanged(OrchestratedSessionManager.SessionState state) {
+                Logger.d(TAG, "Orchestrated state: %s", state);
+                // Map orchestrated states to conversation states
+                switch (state) {
+                    case CONNECTING:
+                        setState(ConversationState.CONNECTING);
+                        break;
+                    case CONNECTED:
+                        setState(ConversationState.CONFIGURING);
+                        break;
+                    case STREAM_READY:
+                        setState(ConversationState.READY);
+                        break;
+                    case ERROR:
+                        setState(ConversationState.ERROR);
+                        break;
+                    case IDLE:
+                        if (currentState != ConversationState.IDLE) {
+                            setState(ConversationState.IDLE);
+                        }
+                        break;
+                }
+            }
+
+            @Override
+            public void onStreamReady() {
+                Logger.i(TAG, "Orchestrated stream ready");
+                if (listener != null) {
+                    listener.onAvatarVideoReady();
+                }
+            }
+
+            @Override
+            public void onAgentSpeakStarted() {
+                Logger.d(TAG, "Agent started speaking (orchestrated)");
+                setState(ConversationState.SPEAKING);
+                // Note: Agent sends explicit robot_gesture/robot_emotion commands via data channel
+            }
+
+            @Override
+            public void onAgentSpeakEnded() {
+                Logger.d(TAG, "Agent stopped speaking (orchestrated)");
+                if (currentState == ConversationState.SPEAKING) {
+                    setState(ConversationState.READY);
+                }
+            }
+
+            @Override
+            public void onUserTranscript(String text) {
+                Logger.d(TAG, "User transcript (orchestrated): %s", text);
+                userTranscript.append("User: ").append(text).append("\n");
+                messageCount++;
+                if (listener != null) {
+                    listener.onTranscript(text, true);
+                }
+                if (analytics != null) {
+                    analytics.recordUserMessage();
+                }
+            }
+
+            @Override
+            public void onAiTranscript(String text) {
+                Logger.d(TAG, "AI transcript (orchestrated): %s", text);
+                aiTranscript.append("AI: ").append(text).append("\n");
+                messageCount++;
+                if (listener != null) {
+                    listener.onTranscript(text, false);
+                }
+                if (analytics != null) {
+                    analytics.recordAiResponse();
+                }
+            }
+
+            @Override
+            public void onRobotCommand(String command, String arguments) {
+                Logger.i(TAG, "Robot command from Agent: %s (%s)", command, arguments);
+                // Execute robot commands locally via FunctionExecutor
+                // The Agent already handled CRM functions server-side;
+                // only robot_* commands are forwarded via data channel
+                if (functionExecutor != null) {
+                    functionExecutor.executeFunctionCall(
+                        "orchestrated-" + System.currentTimeMillis(),
+                        command,
+                        arguments,
+                        null,
+                        new FunctionExecutor.ExecutionCallback() {
+                            @Override
+                            public void onFunctionResult(String callId, String result) {
+                                Logger.d(TAG, "Robot command executed: %s -> %s", command, result);
+                            }
+
+                            @Override
+                            public void onFunctionError(String callId, String error) {
+                                Logger.w(TAG, "Robot command failed: %s -> %s", command, error);
+                            }
+                        }
+                    );
+                }
+            }
+
+            @Override
+            public void onError(String error) {
+                Logger.e(TAG, "Orchestrated session error: %s", error);
+                if (listener != null) {
+                    listener.onError(error);
+                }
+            }
+        });
+
+        Logger.i(TAG, "Orchestrated session manager initialized");
+    }
+
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         Logger.d(TAG, "Service started");
@@ -511,6 +655,12 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
         if (liveAvatarSessionManager != null) {
             liveAvatarSessionManager.destroy();
             liveAvatarSessionManager = null;
+        }
+
+        // Cleanup Orchestrated session
+        if (orchestratedSessionManager != null) {
+            orchestratedSessionManager.destroy();
+            orchestratedSessionManager = null;
         }
 
         super.onDestroy();
@@ -608,10 +758,24 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
     }
 
     /**
-     * Check if any avatar (HeyGen or LiveAvatar) is enabled
+     * Get the Orchestrated session manager for UI binding (video renderer)
+     */
+    public OrchestratedSessionManager getOrchestratedSessionManager() {
+        return orchestratedSessionManager;
+    }
+
+    /**
+     * Check if orchestrated mode is active
+     */
+    public boolean isOrchestratedMode() {
+        return isOrchestratedMode && orchestratedSessionManager != null;
+    }
+
+    /**
+     * Check if any avatar (HeyGen, LiveAvatar, or Orchestrated) is enabled
      */
     public boolean isAnyAvatarEnabled() {
-        return isHeyGenEnabled() || isLiveAvatarEnabled();
+        return isHeyGenEnabled() || isLiveAvatarEnabled() || isOrchestratedMode();
     }
 
     public void startConversation() {
@@ -620,7 +784,7 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
             return;
         }
 
-        Logger.i(TAG, "Starting conversation... (standalone=%b)", isStandaloneMode);
+        Logger.i(TAG, "Starting conversation... (orchestrated=%b, standalone=%b)", isOrchestratedMode, isStandaloneMode);
         setState(ConversationState.CONNECTING);
 
         currentTranscript = new StringBuilder();
@@ -632,12 +796,16 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
 
         analytics.startSession();
 
-        if (isStandaloneMode) {
+        if (isOrchestratedMode) {
+            // ORCHESTRATED MODE: Single LiveKit room with Agent + HeyGen
+            // Agent handles STT+LLM+TTS server-side, HeyGen provides lip-sync video
+            startOrchestratedSession();
+        } else if (isStandaloneMode) {
             // STANDALONE MODE: Only start LiveAvatar session
             // HeyGen handles everything: mic capture via LiveKit, STT, LLM, TTS, video
             startStandaloneSession();
         } else {
-            // LEGACY MODE: Connect to OpenAI first, then start LiveAvatar in parallel
+            // HYBRID MODE: Connect to OpenAI first, then start LiveAvatar in parallel
             webRTCManager.connect();
         }
     }
@@ -682,6 +850,43 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
         }
     }
     
+    /**
+     * Start conversation in orchestrated mode.
+     * Single LiveKit room with OpenAI Agent (STT+LLM+TTS) + HeyGen Avatar (lip-sync video).
+     * Android app just publishes mic and subscribes to audio + video.
+     */
+    private void startOrchestratedSession() {
+        Logger.i(TAG, "Starting orchestrated LiveKit session...");
+
+        // Maximize volume without requesting audio focus (LiveKit manages audio session)
+        AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+        if (am != null) {
+            am.setStreamVolume(AudioManager.STREAM_VOICE_CALL,
+                    am.getStreamMaxVolume(AudioManager.STREAM_VOICE_CALL), 0);
+            am.setStreamVolume(AudioManager.STREAM_MUSIC,
+                    am.getStreamMaxVolume(AudioManager.STREAM_MUSIC), 0);
+            Logger.i(TAG, "Orchestrated mode: Volume maximized (no audio focus request)");
+        }
+
+        // Start orchestrated session via backend
+        if (orchestratedSessionManager != null) {
+            orchestratedSessionManager.startSession(LiveAvatarConfig.getAvatarId());
+        } else {
+            Logger.e(TAG, "Cannot start orchestrated session - manager not initialized");
+            setState(ConversationState.ERROR);
+            if (listener != null) {
+                listener.onError("Orchestrated session manager not initialized");
+            }
+        }
+
+        // Greeting gesture
+        if (sanbotMotionManager != null && sanbotMotionManager.isAvailable()) {
+            mainHandler.postDelayed(() -> {
+                sanbotMotionManager.greet();
+            }, 500);
+        }
+    }
+
     public void stopConversation() {
         if (currentState == ConversationState.IDLE) {
             return;
@@ -701,6 +906,11 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
         // Stop LiveAvatar session
         if (liveAvatarSessionManager != null) {
             liveAvatarSessionManager.stopSession();
+        }
+
+        // Stop Orchestrated session
+        if (orchestratedSessionManager != null && isOrchestratedMode) {
+            orchestratedSessionManager.stopSession();
         }
 
         // Say goodbye gesture

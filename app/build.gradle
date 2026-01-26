@@ -37,6 +37,9 @@ android {
 
         // OpenAI WebRTC Feature Flag (false = standalone HeyGen FULL mode, no OpenAI needed)
         buildConfigField "boolean", "ENABLE_OPENAI_WEBRTC", "${project.findProperty('ENABLE_OPENAI_WEBRTC') ?: 'true'}"
+
+        // Orchestrated Mode (Single LiveKit room with OpenAI Agent + HeyGen BYOLI)
+        buildConfigField "boolean", "ENABLE_ORCHESTRATED_MODE", "${project.findProperty('ENABLE_ORCHESTRATED_MODE') ?: 'false'}"
     }
 
     buildTypes {
