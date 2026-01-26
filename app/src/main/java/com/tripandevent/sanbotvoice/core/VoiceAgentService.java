@@ -522,6 +522,15 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
             @Override
             public void onStreamReady() {
                 Logger.i(TAG, "Orchestrated stream ready");
+
+                // Attach LoudnessEnhancer for clearer, louder audio output (20dB boost)
+                // Session 0 = global output mix (works for LiveKit remote audio)
+                if (audioBooster != null) {
+                    audioBooster.attachLoudnessEnhancer(0);
+                    audioBooster.forceReconfigure();
+                    Logger.i(TAG, "Orchestrated audio boosted: %s", audioBooster.getVolumeInfo());
+                }
+
                 if (listener != null) {
                     listener.onAvatarVideoReady();
                 }
@@ -858,14 +867,10 @@ public class VoiceAgentService extends Service implements WebRTCManager.WebRTCCa
     private void startOrchestratedSession() {
         Logger.i(TAG, "Starting orchestrated LiveKit session...");
 
-        // Maximize volume without requesting audio focus (LiveKit manages audio session)
-        AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
-        if (am != null) {
-            am.setStreamVolume(AudioManager.STREAM_VOICE_CALL,
-                    am.getStreamMaxVolume(AudioManager.STREAM_VOICE_CALL), 0);
-            am.setStreamVolume(AudioManager.STREAM_MUSIC,
-                    am.getStreamMaxVolume(AudioManager.STREAM_MUSIC), 0);
-            Logger.i(TAG, "Orchestrated mode: Volume maximized (no audio focus request)");
+        // Configure audio for maximum volume + clarity (speakerphone, MODE_IN_COMMUNICATION)
+        if (audioBooster != null) {
+            audioBooster.forceReconfigure();
+            Logger.i(TAG, "Orchestrated mode: AudioBooster configured: %s", audioBooster.getVolumeInfo());
         }
 
         // Start orchestrated session via backend

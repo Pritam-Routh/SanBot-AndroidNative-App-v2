@@ -58,6 +58,7 @@ public class MainActivity extends AppCompatActivity implements VoiceAgentService
     private SurfaceViewRenderer avatarVideoView;
     private ProgressBar avatarLoading;
     private LinearLayout avatarErrorOverlay;
+    private ImageButton avatarCloseButton;
     private AvatarViewController avatarViewController;
 
     // Service connection
@@ -154,15 +155,26 @@ public class MainActivity extends AppCompatActivity implements VoiceAgentService
         avatarVideoView = findViewById(R.id.avatarVideoView);
         avatarLoading = findViewById(R.id.avatarLoading);
         avatarErrorOverlay = findViewById(R.id.avatarErrorOverlay);
+        avatarCloseButton = findViewById(R.id.avatarCloseButton);
 
         if (avatarContainer != null && avatarVideoView != null && avatarLoading != null) {
             avatarViewController = new AvatarViewController(
                     avatarContainer,
                     avatarVideoView,
                     avatarLoading,
-                    avatarErrorOverlay
+                    avatarErrorOverlay,
+                    avatarCloseButton
             );
             Logger.d(TAG, "Avatar views initialized");
+        }
+
+        // Close button ends the avatar call
+        if (avatarCloseButton != null) {
+            avatarCloseButton.setOnClickListener(v -> {
+                if (isServiceBound && voiceService != null) {
+                    voiceService.stopConversation();
+                }
+            });
         }
     }
     
@@ -355,6 +367,7 @@ public class MainActivity extends AppCompatActivity implements VoiceAgentService
                     if (orchestratedManager != null) {
                         avatarViewController.bindOrchestratedManager(orchestratedManager);
                         avatarViewController.showVideo();
+                        setAvatarFullscreen(true);
                         Logger.i(TAG, "Orchestrated video shown successfully");
                         return;
                     } else {
@@ -369,6 +382,7 @@ public class MainActivity extends AppCompatActivity implements VoiceAgentService
                         Logger.d(TAG, "LiveAvatar session state: %s", liveAvatarManager.getState());
                         avatarViewController.bindLiveAvatarManager(liveAvatarManager);
                         avatarViewController.showVideo();
+                        setAvatarFullscreen(true);
                         Logger.i(TAG, "LiveAvatar video shown successfully");
                         return;
                     } else {
@@ -387,6 +401,7 @@ public class MainActivity extends AppCompatActivity implements VoiceAgentService
                                     videoManager.isConnected(), videoManager.hasVideoTrack());
                             avatarViewController.bindVideoManager(videoManager);
                             avatarViewController.showVideo();
+                            setAvatarFullscreen(true);
                             Logger.i(TAG, "HeyGen avatar video shown successfully");
                         } else {
                             Logger.e(TAG, "HeyGen VideoManager is null!");
@@ -516,6 +531,7 @@ public class MainActivity extends AppCompatActivity implements VoiceAgentService
                 // Show avatar loading when connecting (for any avatar provider)
                 if (voiceService != null && voiceService.isAnyAvatarEnabled()) {
                     avatarViewController.showLoading();
+                    setAvatarFullscreen(true);
                 }
                 break;
 
@@ -545,12 +561,28 @@ public class MainActivity extends AppCompatActivity implements VoiceAgentService
                 }
                 Logger.d(TAG, "Hiding avatar - conversation state: %s", state);
                 avatarViewController.hide();
+                setAvatarFullscreen(false);
                 break;
 
             // For other states (READY, LISTENING, PROCESSING, SPEAKING, EXECUTING_FUNCTION)
             // the avatar remains visible if already showing
             default:
                 break;
+        }
+    }
+
+    /**
+     * Hide/show the orb and status text when avatar video takes over the screen.
+     */
+    private void setAvatarFullscreen(boolean avatarActive) {
+        if (voiceOrb != null) {
+            voiceOrb.setVisibility(avatarActive ? View.GONE : View.VISIBLE);
+        }
+        if (statusText != null) {
+            statusText.setVisibility(avatarActive ? View.GONE : View.VISIBLE);
+        }
+        if (questionText != null) {
+            questionText.setVisibility(avatarActive ? View.GONE : View.VISIBLE);
         }
     }
 

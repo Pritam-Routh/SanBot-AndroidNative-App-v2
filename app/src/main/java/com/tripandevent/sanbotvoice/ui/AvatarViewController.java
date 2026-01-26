@@ -4,6 +4,7 @@ import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
 import android.view.View;
 import android.widget.FrameLayout;
+import android.widget.ImageButton;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 
@@ -31,6 +32,7 @@ public class AvatarViewController {
     private final SurfaceViewRenderer avatarVideoView;
     private final ProgressBar avatarLoading;
     private final LinearLayout avatarErrorOverlay;
+    private final ImageButton closeButton;
 
     // State
     private boolean isVisible = false;
@@ -40,11 +42,13 @@ public class AvatarViewController {
             @NonNull FrameLayout avatarContainer,
             @NonNull SurfaceViewRenderer avatarVideoView,
             @NonNull ProgressBar avatarLoading,
-            @Nullable LinearLayout avatarErrorOverlay) {
+            @Nullable LinearLayout avatarErrorOverlay,
+            @Nullable ImageButton closeButton) {
         this.avatarContainer = avatarContainer;
         this.avatarVideoView = avatarVideoView;
         this.avatarLoading = avatarLoading;
         this.avatarErrorOverlay = avatarErrorOverlay;
+        this.closeButton = closeButton;
 
         // Initialize as hidden
         avatarContainer.setVisibility(View.GONE);
@@ -62,6 +66,9 @@ public class AvatarViewController {
         avatarVideoView.setVisibility(View.INVISIBLE);
         if (avatarErrorOverlay != null) {
             avatarErrorOverlay.setVisibility(View.GONE);
+        }
+        if (closeButton != null) {
+            closeButton.setVisibility(View.GONE);
         }
 
         // Animate in
@@ -88,6 +95,9 @@ public class AvatarViewController {
         avatarVideoView.setVisibility(View.VISIBLE);
         if (avatarErrorOverlay != null) {
             avatarErrorOverlay.setVisibility(View.GONE);
+        }
+        if (closeButton != null) {
+            closeButton.setVisibility(View.VISIBLE);
         }
 
         // Always ensure container is visible and alpha is 1
@@ -116,6 +126,9 @@ public class AvatarViewController {
         avatarVideoView.setVisibility(View.INVISIBLE);
         if (avatarErrorOverlay != null) {
             avatarErrorOverlay.setVisibility(View.VISIBLE);
+        }
+        if (closeButton != null) {
+            closeButton.setVisibility(View.VISIBLE);
         }
     }
 

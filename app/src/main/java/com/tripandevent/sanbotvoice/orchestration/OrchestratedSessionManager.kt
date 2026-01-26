@@ -9,6 +9,7 @@ import io.livekit.android.events.RoomEvent
 import io.livekit.android.events.collect
 import io.livekit.android.room.Room
 import io.livekit.android.RoomOptions
+import io.livekit.android.room.track.LocalAudioTrackOptions
 import io.livekit.android.room.track.RemoteAudioTrack
 import io.livekit.android.room.track.RemoteVideoTrack
 import io.livekit.android.ConnectOptions
@@ -218,7 +219,13 @@ class OrchestratedSessionManager(private val appContext: Context) {
 
                 val newRoom = LiveKit.create(
                     appContext,
-                    RoomOptions(),
+                    RoomOptions(
+                        audioTrackCaptureDefaults = LocalAudioTrackOptions(
+                            noiseSuppression = true,
+                            echoCancellation = true,
+                            autoGainControl = true,
+                        )
+                    ),
                     LiveKitOverrides()
                 )
                 room = newRoom
@@ -267,7 +274,7 @@ class OrchestratedSessionManager(private val appContext: Context) {
                 Log.i(TAG, "Track subscribed: identity=$identity, kind=${track.kind}, sid=${track.sid}")
 
                 when {
-                    // Video from Avatar (HeyGen/LiveAvatar) → display to user
+                    // Video from Avatar (HeyGen BYOLI) → display to user
                     track is RemoteVideoTrack && isAvatarParticipant(identity) -> {
                         Log.i(TAG, "Avatar VIDEO track received (identity=$identity)")
                         avatarParticipantFound = true
@@ -276,30 +283,31 @@ class OrchestratedSessionManager(private val appContext: Context) {
                         checkStreamReady()
                     }
 
-                    // Audio from Avatar (HeyGen/LiveAvatar) → PLAY
-                    // The LiveAvatar plugin routes agent TTS audio through HeyGen,
-                    // so the avatar's audio track IS the primary TTS audio source.
+                    // Audio from Avatar (HeyGen BYOLI) → PLAY (boosted volume)
+                    // Avatar audio is lip-synced with the video — play it for perfect sync.
                     track is RemoteAudioTrack && isAvatarParticipant(identity) -> {
-                        Log.i(TAG, "Avatar AUDIO track received - playing TTS (identity=$identity)")
+                        Log.i(TAG, "Avatar AUDIO track received - playing (lip-synced) identity=$identity")
                         avatarParticipantFound = true
-                        // Audio plays automatically via LiveKit
+                        // Boost avatar audio volume (HeyGen output tends to be quiet)
+                        try {
+                            track.setVolume(3.0)
+                            Log.i(TAG, "Avatar audio volume boosted to 8.0x")
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Failed to set avatar audio volume: ${e.message}")
+                        }
                         checkStreamReady()
                     }
 
-                    // Audio from Agent → mute if avatar audio is already available
-                    // to prevent double audio (agent publishes raw TTS, avatar publishes same via HeyGen)
+                    // Audio from Agent (OpenAI Realtime) → MUTE
+                    // The avatar produces lip-synced audio+video together.
+                    // Mute the raw agent audio to avoid double audio / out-of-sync playback.
                     track is RemoteAudioTrack && identity.startsWith("agent") -> {
                         agentParticipantFound = true
-                        if (avatarParticipantFound) {
-                            Log.i(TAG, "Agent AUDIO track MUTED (avatar provides audio)")
-                            try {
-                                track.setVolume(0.0)
-                            } catch (e: Exception) {
-                                Log.w(TAG, "Failed to mute agent audio: ${e.message}")
-                            }
-                        } else {
-                            Log.i(TAG, "Agent AUDIO track received - playing TTS (no avatar audio yet)")
-                            // Audio plays automatically via LiveKit
+                        Log.i(TAG, "Agent AUDIO track MUTED (avatar provides lip-synced audio)")
+                        try {
+                            track.setVolume(0.0)
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Failed to mute agent audio: ${e.message}")
                         }
                         checkStreamReady()
                     }
@@ -452,14 +460,22 @@ class OrchestratedSessionManager(private val appContext: Context) {
     }
 
     private fun detachVideoTrack() {
-        val track = remoteVideoTrack ?: return
-        val renderer = videoRenderer ?: return
+        val renderer = videoRenderer
 
+        // Remove track from renderer
         try {
-            track.removeRenderer(renderer)
-            Log.d(TAG, "Video track detached from renderer")
+            remoteVideoTrack?.removeRenderer(renderer ?: return)
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to detach video track", e)
+            Log.w(TAG, "Failed to remove renderer from track", e)
+        }
+
+        // Release the EGL context so renderer can be re-initialized on next session.
+        // Without this, reconnecting throws IllegalStateException("Already initialized").
+        try {
+            renderer?.release()
+            Log.d(TAG, "Video renderer released")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to release video renderer", e)
         }
     }
 
